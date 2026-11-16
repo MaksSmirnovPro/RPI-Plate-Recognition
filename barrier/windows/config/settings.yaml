@@ -1,0 +1,31 @@
+
+model:
+  # Путь относительно папки windows.
+  path: ../models/license-plate-finetune-v1n.onnx
+
+  input_size: 640
+  confidence: 0.45
+  nms_threshold: 0.45
+
+  # auto, yolo или nms
+  output_format: yolo
+
+ocr:
+  language: eng
+  min_confidence: 0
+
+  # Путь к исполняемому файлу Tesseract.
+  # Если Tesseract добавлен в PATH, оставить пустым.
+  tesseract_cmd: ""
+
+dataset:
+  images_dir: dataset/images
+  labels_file: dataset/labels.csv
+
+evaluation:
+  save_images: true
+  show_images: false
+  save_csv: true
+
+  # IoU для оценки совпадения найденной рамки
+  iou_threshold: 0.5

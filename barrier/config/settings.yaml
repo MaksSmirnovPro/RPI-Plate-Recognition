@@ -1,0 +1,27 @@
+camera:
+  width: 640
+  height: 480
+
+detector:
+  model_path: models/license-plate-finetune-v1n.onnx
+  input_size: 640
+  confidence: 0.45
+  nms_threshold: 0.45
+
+ocr:
+  language: eng
+  min_confidence: 35
+
+access:
+  allowed_plates_file: config/allowed_plates.txt
+  required_confirmations: 2
+  cooldown_seconds: 10
+
+barrier:
+  gpio_pin: 18
+  closed_angle: 0
+  opened_angle: 90
+  open_duration: 5
+
+processing:
+  interval_seconds: 1.5

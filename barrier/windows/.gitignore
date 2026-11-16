@@ -1,0 +1,20 @@
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Virtual environment
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+
+# Runtime results
+results/
+*.log
+
+# Dataset images (если не планируется хранить их в Git)
+# dataset/images/
