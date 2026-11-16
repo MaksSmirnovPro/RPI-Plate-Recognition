@@ -26,7 +26,7 @@ sudo apt install -y \
   python3-picamera2 python3-libcamera \
   python3-gpiozero python3-lgpio \
   tesseract-ocr tesseract-ocr-eng \
-  libatlas-base-dev
+  libcamera-dev
 ```
 
 Если для используемого языка/региона номеров нужен другой набор символов Tesseract, установите соответствующий пакет `tesseract-ocr-<код-языка>`. Для большинства номерных знаков начните с `eng`.
