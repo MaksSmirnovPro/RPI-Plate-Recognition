@@ -37,7 +37,7 @@ sudo apt install -y \
 rpicam-hello --list-cameras
 ```
 
-Для `Picamera2` создавайте виртуальное окружение с доступом к системным пакетам: так Python из venv увидит установленный через APT модуль `picamera2`.
+Для `Picamera2` создавайте виртуальное окружение с доступом к системным пакетами: так Python из venv увидит установленный через APT модуль `picamera2`.
 
 ```bash
 cd ~/barrier
@@ -82,8 +82,8 @@ model = hf_hub_download(
     repo_id="morsetechlab/yolov11-license-plate-detection",
     filename="license-plate-finetune-v1n.onnx",
 )
-Path("models/license_plate_yolo11n.onnx").write_bytes(Path(model).read_bytes())
-print("Модель сохранена:", Path("models/license_plate_yolo11n.onnx").resolve())
+Path("models/license-plate-finetune-v1n.onnx").write_bytes(Path(model).read_bytes())
+print("Модель сохранена:", Path("models/license-plate-finetune-v1n.onnx").resolve())
 PY
 ```
 
@@ -122,42 +122,70 @@ PY
 
 ## Структура
 
+### Реализованная структура (barrier/ — Raspberry Pi runtime)
+
 ```text
 barrier/
-├── README.md
-├── requirements.txt
-├── .gitignore
 ├── config/
-│   ├── settings.yaml              # интервал кадров, пороги, GPIO, углы серво
-│   └── allowed_plates.txt         # whitelist: один номер на строку
+│   ├── settings.yaml              # все настройки: камера, детектор, OCR, доступ, шлагбаум, processing
+│   └── allowed_plates.txt         # whitelist: по одному номеру на строку (6 номеров)
 ├── models/
-│   └── license_plate_yolo11n.onnx # скачать отдельно; не хранить в Git при необходимости
+│   ├── license-plate-finetune-v1n.onnx   # 10.5 MB — рекомендуется для Pi 5
+│   ├── license-plate-finetune-v1n.pt
+│   ├── license-plate-finetune-v1s.onnx   # 37.8 MB
+│   ├── license-plate-finetune-v1m.onnx   # 80.3 MB
+│   ├── license-plate-finetune-v1m.pt
+│   └── license-plate-finetune-v1l.onnx   # 101 MB
 ├── src/
 │   ├── __init__.py
-│   ├── main.py                    # запуск приложения и главный цикл
-│   ├── camera.py                  # получение кадров через Picamera2
-│   ├── detector.py                # ONNX Runtime: YOLO-детекция рамки номера
-│   ├── ocr.py                     # подготовка crop и Tesseract OCR
-│   ├── access_control.py          # нормализация, whitelist, подтверждения
-│   ├── barrier.py                 # SG-90 через gpiozero.AngularServo
-│   └── logger.py                  # журналирование событий
-├── data/
-│   ├── captures/                  # необязательные диагностические кадры
-│   └── logs/
+│   ├── main.py                    # LicensePlateSystem — главный orquestратор + CLI
+│   ├── camera.py                  # Camera — Picamera2 wrapper (RGB888, 640x480)
+│   ├── detector.py                # PlateDetector — YOLO11n ONNX через ONNX Runtime
+│   ├── ocr.py                     # PlateOCR — Tesseract с 8 вариантами предобработки + голосование
+│   ├── access_control.py          # AccessControl — whitelist, подтверждения, cooldown
+│   ├── barrier.py                 # Barrier — SG-90 через gpiozero.AngularServo
+│   └── logger.py                  # setup_logger — RotatingFileHandler + console
+├── tests/
+│   ├── test_access_control.py     # whitelist, подтверждения, сброс счётчика
+│   └── test_plate_normalization.py # normalize() тесты для AccessControl и PlateOCR
+└── data/                          # создаётся автоматически при запуске
+    ├── captures/                  # диагностические кадры (не используется в текущей версии)
+    └── logs/
+        └── barrier.log            # ротирующие логи (2MB, 3 бэкапа)
+```
+
+### Дополнительная структура (barrier/windows/ — оценка качества)
+
+```text
+barrier/windows/
+├── config/settings.yaml           # настройки для оценки на датасете
+├── dataset/
+│   ├── images/                    # 4 тестовых изображения
+│   └── labels.csv                 # разметка: image, plate, [x1,y1,x2,y2]
+├── results/                       # генерируются автоматически
+│   ├── annotated/                 # изображения с нарисованными GT и детекциями
+│   ├── crops/                     # вырезанные области номерных знаков
+│   └── rectification/             # результаты выпрямления номеров
+├── src/
+│   ├── main.py                    # CLI: запуск оценки датасета (--show флаг)
+│   ├── detector.py                # PlateDetector с output_format (auto/yolo/nms)
+│   ├── ocr.py                     # PlateOCR с tesseract_cmd и детальным логированием
+│   └── evaluate.py                # DatasetEvaluator — метрики IoU, exact match, coverage
 └── tests/
-    ├── test_access_control.py
-    └── test_plate_normalization.py
+    ├── test_normalization.py      # unit-тесты normalize_plate, calculate_iou
+    ├── test_ocr.py                # диагностика OCR на crops
+    ├── test_ocr_1.py              # глубокая диагностика: thresholds, adaptive, illumination
+    └── test_rectification.py      # выпрямление кривых номеров + OCR сравнение
 ```
 
 ### Примечания к структуре
 
-- `models/*.onnx` — бинарные веса; скачиваются отдельно, в репозиторий исходников обычно не коммитятся.
+- `models/*.onnx` / `models/*.pt` — бинарные веса; скачиваются отдельно, в репозиторий исходников обычно не коммитятся (см. `.gitignore`).
 - `config/allowed_plates.txt` — список разрешённых номеров, хранить с ограниченными правами доступа.
 - `config/settings.yaml` — все настройки оборудования и алгоритма, чтобы не менять код при калибровке.
 - `data/captures/` и `data/logs/` — локальные данные, не добавлять в Git.
 - `tests/` — тесты логики whitelist и нормализации, которые можно запускать без камеры и сервопривода.
-
-
+- Windows-подпроект в `barrier/windows/` — для разработки и оценки качества на ПК перед деплоем на Pi.
 
 ## Pinouts
 
@@ -175,7 +203,7 @@ Barrier positions:
 - 180° — closed
 - 90° — open
 
-The barrier automatically closes 10 seconds after opening.
+The barrier automatically closes 10 seconds after opening (configurable via `open_duration`).
 
 The servo is initialized in the closed position.
 
@@ -184,13 +212,130 @@ The servo is initialized in the closed position.
 - Connect the external power supply GND to Raspberry Pi GND.
 - Do not power the servo from a GPIO pin.
 
+## Конфигурация (config/settings.yaml)
 
+```yaml
+camera:
+  width: 640
+  height: 480
+
+detector:
+  model_path: models/license-plate-finetune-v1n.onnx
+  input_size: 640
+  confidence: 0.45
+  nms_threshold: 0.45
+
+ocr:
+  language: eng
+  min_confidence: 0
+
+access:
+  allowed_plates_file: config/allowed_plates.txt
+  required_confirmations: 1
+  cooldown_seconds: 1
+
+barrier:
+  gpio_pin: 18
+  closed_angle: 180
+  opened_angle: 90
+  open_duration: 7
+
+processing:
+  interval_seconds: 2
+```
+
+### Основные параметры
+
+| Секция | Параметр | Описание |
+|--------|----------|----------|
+| camera | width/height | Разрешение камеры (RGB888) |
+| detector | model_path | Путь к ONNX модели относительно barrier/ |
+| detector | confidence | Порог уверенности YOLO |
+| detector | nms_threshold | IoU порог для NMS |
+| ocr | language | Язык Tesseract (eng) |
+| access | required_confirmations | Сколько раз подряд распознать номер |
+| access | cooldown_seconds | Пауза после открытия шлагбаума |
+| barrier | gpio_pin | GPIO пин сервы (18 = pin 12) |
+| barrier | open_duration | Время открытого состояния (сек) |
+| processing | interval_seconds | Интервал цикла распознавания |
 
 ## Первый запуск
 
 ```bash
+# 1. Клонировать репозиторий
+cd ~/barrier
+
+# 2. Создать виртуальное окружение с доступом к системным пакетам
+python3 -m venv --system-site-packages .venv
 source .venv/bin/activate
+
+# 3. Установить Python-зависимости
+pip install --upgrade pip
+pip install -r requirements.txt
+
+# 4. Скачать модель YOLO (если не скачана)
+mkdir -p models
+python - <<'PY'
+from huggingface_hub import hf_hub_download
+from pathlib import Path
+model = hf_hub_download(
+    repo_id="morsetechlab/yolov11-license-plate-detection",
+    filename="license-plate-finetune-v1n.onnx",
+)
+Path("models/license-plate-finetune-v1n.onnx").write_bytes(Path(model).read_bytes())
+print("Модель сохранена:", Path("models/license-plate-finetune-v1n.onnx").resolve())
+PY
+
+# 5. Проверить конфигурацию
+cat config/settings.yaml
+cat config/allowed_plates.txt
+
+# 6. Запуск
 python -m src.main
 ```
 
-Перед первым запуском убедитесь, что модель находится по пути `models/license_plate_yolo11n.onnx`, whitelist заполнен, камера доступна, а серво проверен без механической нагрузки.
+Перед первым запуском убедитесь, что:
+- Модель находится по пути `models/license-plate-finetune-v1n.onnx`
+- Whitelist заполнен в `config/allowed_plates.txt`
+- Камера доступна (`rpicam-hello --list-cameras`)
+- Серво проверено без механической нагрузки
+- Подключено отдельное питание 5V для SG-90 с общей землей
+
+## Оценка качества на Windows (barrier/windows/)
+
+Для разработки и подбора параметров без Raspberry Pi:
+
+```bash
+cd barrier/windows
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+
+# Запуск оценки на датасете
+python -m src.main
+
+# Диагностика OCR
+python -m tests.test_ocr
+python -m tests.test_ocr_1
+
+# Выпрямление номеров
+python -m tests.test_rectification
+```
+
+Результаты сохраняются в `barrier/windows/results/`:
+- `results.csv` — таблица с метриками
+- `annotated/` — изображения с GT (синий) и детекциями (зелёный)
+- `crops/` — вырезанные номера для анализа OCR
+- `rectification/comparison.csv` — сравнение OCR до/после выпрямления
+
+## Архитектура
+
+Подробное описание архитектуры, граф зависимостей, поток данных и ключевые решения см. в **Architecture.md**.
+
+### Ключевые моменты
+
+1. **Два потока**: камера (main thread, 30+ FPS) + распознавание (worker, 0.5 Hz)
+2. **Barrier state machine**: vehicle_present продлевает открытие, cooldown защищает от дребезга
+3. **OCR robustness**: 8 предобработок × 4 PSM = 32 попытки, голосование по частоте и уверенности
+4. **Universal YOLO parser**: автоопределение форматов NMS-ready и raw YOLO
+5. **Access control**: нормализация + N подтверждений + cooldown
