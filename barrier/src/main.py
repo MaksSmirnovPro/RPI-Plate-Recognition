@@ -1,151 +1,379 @@
+
+import threading
 import time
-import signal
-import sys
 from pathlib import Path
 
+import cv2
 import yaml
 
-from camera import Camera
-from detector import PlateDetector
-from ocr import PlateOCR
-from access_control import AccessControl
-from barrier import Barrier
-from logger import setup_logger
+from src.camera import Camera
+from src.detector import PlateDetector
+from src.ocr import PlateOCR
+from src.access_control import AccessControl
+from src.barrier import Barrier
+from src.logger import setup_logger
 
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-CONFIG_PATH = BASE_DIR / "config" / "settings.yaml"
+PROJECT_DIR = Path(__file__).resolve().parents[1]
+CONFIG_PATH = PROJECT_DIR / "config" / "settings.yaml"
 
 
-def load_config():
-    with CONFIG_PATH.open("r", encoding="utf-8") as file:
-        return yaml.safe_load(file)
+class LicensePlateSystem:
 
+    def __init__(self):
+        self.logger = setup_logger()
+        self.config = self.load_config()
 
-def main():
-    config = load_config()
-    logger = setup_logger()
+        # Camera
+        camera_cfg = self.config["camera"]
 
-    camera = None
-    barrier = None
+        self.camera = Camera(
+            width=camera_cfg.get("width", 640),
+            height=camera_cfg.get("height", 480),
+        )
 
-    try:
-        logger.info("Запуск системы распознавания номеров")
+        # Detector
+        detector_cfg = self.config["detector"]
 
-        camera_config = config["camera"]
-        detector_config = config["detector"]
-        ocr_config = config["ocr"]
-        access_config = config["access"]
-        barrier_config = config["barrier"]
-
-        model_path = BASE_DIR / detector_config["model_path"]
-        allowed_file = BASE_DIR / access_config["allowed_plates_file"]
+        model_path = PROJECT_DIR / detector_cfg["model_path"]
 
         if not model_path.exists():
             raise FileNotFoundError(
-                f"Не найдена ONNX-модель: {model_path}"
+                f"YOLO model not found: {model_path}"
             )
 
-        camera = Camera(
-            width=camera_config["width"],
-            height=camera_config["height"],
-        )
-
-        detector = PlateDetector(
+        self.detector = PlateDetector(
             model_path=str(model_path),
-            input_size=detector_config["input_size"],
-            confidence=detector_config["confidence"],
-            nms_threshold=detector_config["nms_threshold"],
+            input_size=detector_cfg.get("input_size", 640),
+            confidence=detector_cfg.get("confidence", 0.45),
+            nms_threshold=detector_cfg.get(
+                "nms_threshold", 0.45
+            ),
         )
 
-        ocr = PlateOCR(
-            language=ocr_config["language"],
-            min_confidence=ocr_config["min_confidence"],
+        # OCR
+        ocr_cfg = self.config["ocr"]
+
+        self.ocr = PlateOCR(
+            language=ocr_cfg.get("language", "eng"),
+            min_confidence=ocr_cfg.get("min_confidence", 0),
         )
 
-        access = AccessControl(
+        # Access control
+        access_cfg = self.config["access"]
+
+        allowed_file = (
+            PROJECT_DIR / access_cfg["allowed_plates_file"]
+        )
+
+        if not allowed_file.exists():
+            raise FileNotFoundError(
+                f"Allowed plates file not found: {allowed_file}"
+            )
+
+        self.access = AccessControl(
             allowed_plates_file=str(allowed_file),
-            required_confirmations=access_config["required_confirmations"],
-            cooldown_seconds=access_config["cooldown_seconds"],
+            required_confirmations=access_cfg.get(
+                "required_confirmations", 3
+            ),
+            cooldown_seconds=access_cfg.get(
+                "cooldown_seconds", 15
+            ),
         )
 
-        barrier = Barrier(
-            gpio_pin=barrier_config["gpio_pin"],
-            closed_angle=barrier_config["closed_angle"],
-            opened_angle=barrier_config["opened_angle"],
-            open_duration=barrier_config["open_duration"],
+        # Barrier
+        barrier_cfg = self.config["barrier"]
+
+        self.barrier = Barrier(
+            gpio_pin=barrier_cfg.get("gpio_pin", 18),
+            closed_angle=barrier_cfg.get("closed_angle", 180),
+            opened_angle=barrier_cfg.get("opened_angle", 90),
+            open_duration=barrier_cfg.get("open_duration", 10),
         )
 
-        camera.start()
+        # Processing
+        processing_cfg = self.config.get("processing", {})
 
-        logger.info("Система готова к работе")
+        self.processing_interval = float(
+            processing_cfg.get("interval_seconds", 1.5)
+        )
 
-        interval = float(config["processing"]["interval_seconds"])
+        self.result_display_seconds = 3.0
 
-        while True:
-            cycle_started = time.monotonic()
+        # Shared state
+        self.frame_lock = threading.Lock()
 
-            frame = camera.read()
-            detections = detector.detect(frame)
+        self.latest_frame = None
+        self.result_frame = None
+        self.result_until = 0.0
 
-            if not detections:
-                access.confirm_plate("")
-                logger.info("Номерные знаки не обнаружены")
-            else:
-                # Сначала проверяем наиболее уверенную детекцию.
-                detections.sort(
+        self.stop_event = threading.Event()
+        self.worker = None
+
+    @staticmethod
+    def load_config():
+        if not CONFIG_PATH.exists():
+            raise FileNotFoundError(
+                f"Configuration not found: {CONFIG_PATH}"
+            )
+
+        with open(CONFIG_PATH, "r", encoding="utf-8") as file:
+            return yaml.safe_load(file)
+
+    def recognition_worker(self):
+        """
+        Фоновый поток:
+        detection -> OCR -> access control -> barrier.
+
+        Управление шлагбаумом не блокирует распознавание.
+        """
+
+        self.logger.info("Recognition worker started")
+
+        while not self.stop_event.is_set():
+
+            with self.frame_lock:
+                if self.latest_frame is None:
+                    frame = None
+                else:
+                    frame = self.latest_frame.copy()
+
+            if frame is None:
+                self.stop_event.wait(0.05)
+                continue
+
+            try:
+                # YOLO detection
+                detections = self.detector.detect(frame)
+
+                # Сортируем по confidence
+                detections = sorted(
+                    detections,
                     key=lambda item: item[4],
                     reverse=True,
                 )
 
-                recognized_plate = ""
+                # Наличие обнаруженной номерной рамки.
+                # Пока рамка видна, продлеваем открытое состояние.
+                vehicle_present = len(detections) > 0
+
+                self.barrier.update(
+                    vehicle_present=vehicle_present
+                )
+
+                recognized = False
+
+                height, width = frame.shape[:2]
 
                 for x1, y1, x2, y2, confidence in detections:
-                    plate_image = frame[y1:y2, x1:x2]
-                    plate = ocr.recognize(plate_image)
 
-                    if plate:
-                        recognized_plate = plate
-                        logger.info(
-                            "Распознан номер: %s (детекция %.2f)",
+                    x1, y1, x2, y2 = map(
+                        int, (x1, y1, x2, y2)
+                    )
+
+                    x1 = max(0, min(x1, width))
+                    x2 = max(0, min(x2, width))
+                    y1 = max(0, min(y1, height))
+                    y2 = max(0, min(y2, height))
+
+                    if x2 <= x1 or y2 <= y1:
+                        continue
+
+                    crop = frame[y1:y2, x1:x2]
+
+                    if crop.size == 0:
+                        continue
+
+                    plate = self.ocr.recognize(crop)
+
+                    if not plate:
+                        continue
+
+                    recognized = True
+
+                    self.logger.info(
+                        "Recognized plate: %s | YOLO confidence: %.3f",
+                        plate,
+                        confidence,
+                    )
+
+                    # Отображение результата
+                    display_frame = frame.copy()
+
+                    cv2.rectangle(
+                        display_frame,
+                        (x1, y1),
+                        (x2, y2),
+                        (0, 255, 0),
+                        2,
+                    )
+
+                    text_y = max(y1 - 12, 30)
+
+                    cv2.putText(
+                        display_frame,
+                        plate,
+                        (x1, text_y),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.9,
+                        (0, 255, 0),
+                        2,
+                        cv2.LINE_AA,
+                    )
+
+                    with self.frame_lock:
+                        self.result_frame = display_frame
+                        self.result_until = (
+                            time.monotonic()
+                            + self.result_display_seconds
+                        )
+
+                    # Проверка доступа
+                    if self.access.confirm_plate(plate):
+
+                        self.logger.info(
+                            "ACCESS GRANTED: %s",
                             plate,
-                            confidence,
-                        )
-                        break
-
-                if recognized_plate:
-                    if access.confirm_plate(recognized_plate):
-                        logger.info(
-                            "Доступ разрешён: %s",
-                            recognized_plate,
                         )
 
-                        barrier.open_for()
-                        logger.info("Шлагбаум закрыт")
-                else:
-                    access.confirm_plate("")
-                    logger.info("Не удалось распознать номер")
+                        # ВАЖНО:
+                        # open_for() теперь неблокирующий.
+                        # Поток распознавания продолжит работу.
+                        self.barrier.open_for()
 
-            # Учитываем время обработки, чтобы выдерживать интервал
-            # между началами циклов.
-            elapsed = time.monotonic() - cycle_started
-            time.sleep(max(0.0, interval - elapsed))
+                    else:
+                        self.logger.info(
+                            "Access not granted: %s",
+                            plate,
+                        )
 
-    except KeyboardInterrupt:
-        logger.info("Получен сигнал остановки")
+                    # Обрабатываем один номер за цикл
+                    break
 
-    except Exception:
-        logger.exception("Критическая ошибка системы")
-        raise
+                if not recognized:
+                    self.access.confirm_plate("")
 
-    finally:
-        if camera is not None:
-            camera.stop()
+            except Exception:
+                self.logger.exception(
+                    "Recognition worker error"
+                )
 
-        if barrier is not None:
-            barrier.stop()
+            self.stop_event.wait(
+                self.processing_interval
+            )
 
-        logger.info("Система остановлена")
+        self.logger.info("Recognition worker stopped")
+
+    def run(self):
+
+        self.logger.info(
+            "Starting license plate recognition system"
+        )
+
+        try:
+            self.camera.start()
+
+            self.barrier.close()
+
+            self.worker = threading.Thread(
+                target=self.recognition_worker,
+                name="RecognitionWorker",
+                daemon=True,
+            )
+
+            self.worker.start()
+
+            window_name = "License Plate Recognition"
+
+            cv2.namedWindow(
+                window_name,
+                cv2.WINDOW_NORMAL,
+            )
+
+            self.logger.info(
+                "Video window started. Press Q to exit."
+            )
+
+            while not self.stop_event.is_set():
+
+                # Камера продолжает работать независимо
+                # от процесса распознавания.
+                frame = self.camera.read()
+
+                if frame is None:
+                    self.stop_event.wait(0.01)
+                    continue
+
+                with self.frame_lock:
+
+                    self.latest_frame = frame.copy()
+
+                    if (
+                        self.result_frame is not None
+                        and time.monotonic() < self.result_until
+                    ):
+                        display_frame = self.result_frame.copy()
+
+                    else:
+                        self.result_frame = None
+                        display_frame = frame.copy()
+
+                cv2.imshow(
+                    window_name,
+                    display_frame,
+                )
+
+                key = cv2.waitKey(1) & 0xFF
+
+                if key == ord("q"):
+                    self.logger.info(
+                        "Exit requested by user"
+                    )
+                    break
+
+        except KeyboardInterrupt:
+            self.logger.info("Keyboard interrupt")
+
+        except Exception:
+            self.logger.exception(
+                "Fatal application error"
+            )
+
+        finally:
+            self.stop_event.set()
+
+            if self.worker is not None:
+                self.worker.join(timeout=5.0)
+
+            try:
+                cv2.destroyAllWindows()
+            except cv2.error:
+                self.logger.warning(
+                    "OpenCV windows could not be closed"
+                )
+
+            try:
+                self.camera.stop()
+            except Exception:
+                self.logger.exception(
+                    "Camera shutdown error"
+                )
+
+            try:
+                self.barrier.stop()
+            except Exception:
+                self.logger.exception(
+                    "Barrier shutdown error"
+                )
+
+            self.logger.info(
+                "License plate recognition system stopped"
+            )
+
+
+def main():
+    system = LicensePlateSystem()
+    system.run()
 
 
 if __name__ == "__main__":

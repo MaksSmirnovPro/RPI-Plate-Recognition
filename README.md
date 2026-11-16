@@ -157,6 +157,35 @@ barrier/
 - `data/captures/` и `data/logs/` — локальные данные, не добавлять в Git.
 - `tests/` — тесты логики whitelist и нормализации, которые можно запускать без камеры и сервопривода.
 
+
+
+## Pinouts
+
+### SG-90 Servo Motor
+
+| SG-90 wire | Raspberry Pi GPIO | Physical pin |
+|---|---|---|
+| Signal (orange) | GPIO18 | 12 |
+| VCC (red) | External +5V | — |
+| GND (brown) | GND | 6 |
+
+The SG-90 signal wire is connected to GPIO18.
+
+Barrier positions:
+- 180° — closed
+- 90° — open
+
+The barrier automatically closes 10 seconds after opening.
+
+The servo is initialized in the closed position.
+
+**Power supply:**
+- Use a separate regulated 5V power supply for the servo.
+- Connect the external power supply GND to Raspberry Pi GND.
+- Do not power the servo from a GPIO pin.
+
+
+
 ## Первый запуск
 
 ```bash
