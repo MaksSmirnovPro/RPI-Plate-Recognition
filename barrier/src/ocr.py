@@ -1,73 +1,328 @@
+
 import re
+from collections import defaultdict
+
 import cv2
+import numpy as np
 import pytesseract
 from pytesseract import Output
+
+
+# Допустимые буквы российских регистрационных знаков.
+PLATE_LETTERS = "ABEKMHOPCTYX"
+
+PLATE_PATTERN = re.compile(
+    rf"[{PLATE_LETTERS}]\d{{3}}[{PLATE_LETTERS}]{{2}}"
+)
+
+# Кириллица -> латиница: визуально совпадающие символы.
+CYRILLIC_TO_LATIN = str.maketrans({
+    "А": "A",
+    "В": "B",
+    "Е": "E",
+    "К": "K",
+    "М": "M",
+    "Н": "H",
+    "О": "O",
+    "Р": "P",
+    "С": "C",
+    "Т": "T",
+    "У": "Y",
+    "Х": "X",
+})
+
+DIGIT_MAP = {
+    "O": "0",
+    "Q": "0",
+    "D": "0",
+    "I": "1",
+    "L": "1",
+    "Z": "2",
+    "S": "5",
+    "B": "8",
+}
+
+LETTER_MAP = {
+    "0": "O",
+    "8": "B",
+    "4": "A",
+}
+
+WHITELIST = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+
+PSM_MODES = (7, 8, 13, 6)
 
 
 class PlateOCR:
     def __init__(
         self,
         language: str = "eng",
-        min_confidence: float = 35.0,
+        min_confidence: float = 0.0,
     ):
         self.language = language
         self.min_confidence = min_confidence
 
     @staticmethod
     def normalize(text: str) -> str:
-        """Оставляет только буквы и цифры, переводит в верхний регистр."""
-        return re.sub(r"[^A-ZА-ЯЁ0-9]", "", text.upper())
+        """Приводит распознанный текст к латинским буквам и цифрам."""
+        text = text.upper().translate(CYRILLIC_TO_LATIN)
+        return re.sub(r"[^A-Z0-9]", "", text)
 
-    def recognize(self, plate_image):
-        if plate_image is None or plate_image.size == 0:
+    @classmethod
+    def extract_plate(cls, text: str) -> str:
+        """
+        Ищет российский номер формата:
+        одна буква + три цифры + две буквы.
+        """
+        text = cls.normalize(text)
+
+        if len(text) < 6:
             return ""
 
-        gray = cv2.cvtColor(plate_image, cv2.COLOR_BGR2GRAY)
+        for start in range(len(text) - 5):
+            candidate = list(text[start:start + 6])
 
-        # Увеличиваем маленькое изображение номера для OCR.
-        gray = cv2.resize(
+            # Первая позиция — буква.
+            candidate[0] = LETTER_MAP.get(
+                candidate[0],
+                candidate[0],
+            )
+
+            # Три центральные позиции — цифры.
+            for index in (1, 2, 3):
+                candidate[index] = DIGIT_MAP.get(
+                    candidate[index],
+                    candidate[index],
+                )
+
+            # Последние две позиции — буквы.
+            for index in (4, 5):
+                candidate[index] = LETTER_MAP.get(
+                    candidate[index],
+                    candidate[index],
+                )
+
+            candidate = "".join(candidate)
+
+            if PLATE_PATTERN.fullmatch(candidate):
+                return candidate
+
+        return ""
+
+    @staticmethod
+    def add_border(image):
+        """Добавляет белое поле вокруг номера."""
+        return cv2.copyMakeBorder(
+            image,
+            30,
+            30,
+            40,
+            40,
+            cv2.BORDER_CONSTANT,
+            value=255,
+        )
+
+    def preprocess(self, plate_image):
+        """
+        Создаёт набор вариантов изображения,
+        используемый при Windows-тестировании.
+        """
+        if plate_image.ndim == 3:
+            gray = cv2.cvtColor(
+                plate_image,
+                cv2.COLOR_BGR2GRAY,
+            )
+        else:
+            gray = plate_image.copy()
+
+        enlarged = cv2.resize(
             gray,
             None,
-            fx=2,
-            fy=2,
+            fx=4,
+            fy=4,
             interpolation=cv2.INTER_CUBIC,
         )
 
-        gray = cv2.bilateralFilter(gray, 9, 75, 75)
+        clahe = cv2.createCLAHE(
+            clipLimit=2.0,
+            tileGridSize=(8, 8),
+        )
 
-        _, threshold = cv2.threshold(
+        enhanced = clahe.apply(enlarged)
+
+        _, otsu_original = cv2.threshold(
             gray,
             0,
             255,
             cv2.THRESH_BINARY + cv2.THRESH_OTSU,
         )
 
-        config = (
-            "--oem 3 --psm 7 "
-            "-c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+        _, otsu = cv2.threshold(
+            enhanced,
+            0,
+            255,
+            cv2.THRESH_BINARY + cv2.THRESH_OTSU,
         )
 
-        result = pytesseract.image_to_data(
-            threshold,
+        adaptive_21 = cv2.adaptiveThreshold(
+            enhanced,
+            255,
+            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY,
+            21,
+            7,
+        )
+
+        adaptive_31 = cv2.adaptiveThreshold(
+            enhanced,
+            255,
+            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY,
+            31,
+            11,
+        )
+
+        blurred = cv2.GaussianBlur(
+            enhanced,
+            (0, 0),
+            1.0,
+        )
+
+        sharpened = cv2.addWeighted(
+            enhanced,
+            1.8,
+            blurred,
+            -0.8,
+            0,
+        )
+
+        variants = [
+            ("enlarged", enlarged),
+            ("enhanced", enhanced),
+            ("otsu_original", otsu_original),
+            ("otsu", otsu),
+            ("adaptive_21", adaptive_21),
+            ("adaptive_31", adaptive_31),
+            ("sharpened", sharpened),
+            ("otsu_inverted", cv2.bitwise_not(otsu)),
+        ]
+
+        return [
+            (name, self.add_border(image))
+            for name, image in variants
+        ]
+
+    def recognize_variant(self, image, psm):
+        """Распознаёт один вариант изображения в заданном PSM."""
+        config = (
+            f"--oem 3 --psm {psm} "
+            f"-c tessedit_char_whitelist={WHITELIST}"
+        )
+
+        data = pytesseract.image_to_data(
+            image,
             lang=self.language,
             config=config,
             output_type=Output.DICT,
         )
 
-        accepted = []
+        words = []
+        confidences = []
 
         for text, confidence in zip(
-            result["text"],
-            result["conf"],
+            data["text"],
+            data["conf"],
         ):
+            cleaned = self.normalize(text)
+
+            if not cleaned:
+                continue
+
             try:
                 confidence = float(confidence)
             except (ValueError, TypeError):
                 continue
 
-            cleaned = self.normalize(text)
+            if confidence < self.min_confidence:
+                continue
 
-            if cleaned and confidence >= self.min_confidence:
-                accepted.append(cleaned)
+            words.append(cleaned)
+            confidences.append(max(0.0, confidence))
 
-        return "".join(accepted)
+        raw_text = "".join(words)
+
+        if confidences:
+            average_confidence = float(
+                np.mean(confidences)
+            )
+        else:
+            average_confidence = 0.0
+
+        plate = self.extract_plate(raw_text)
+
+        return raw_text, plate, average_confidence
+
+    def recognize_variants(self, image):
+        """Проверяет все варианты изображения и режимы Tesseract."""
+        candidates = defaultdict(list)
+
+        for _variant_name, variant in self.preprocess(image):
+            for psm in PSM_MODES:
+                _raw, plate, confidence = (
+                    self.recognize_variant(variant, psm)
+                )
+
+                if plate:
+                    candidates[plate].append(confidence)
+
+        if not candidates:
+            return ""
+
+        # Сначала количество совпадений, затем средняя уверенность.
+        return max(
+            candidates,
+            key=lambda plate: (
+                len(candidates[plate]),
+                float(np.mean(candidates[plate])),
+            ),
+        )
+
+    def recognize(self, plate_image):
+        """Распознаёт номер и возвращает строку либо пустой результат."""
+        if (
+            plate_image is None
+            or plate_image.size == 0
+        ):
+            return ""
+
+        if plate_image.ndim not in (2, 3):
+            return ""
+
+        # Сначала используем исходный crop.
+        result = self.recognize_variants(plate_image)
+
+        if result:
+            return result
+
+        # Дополнительная проверка JPEG-представления,
+        # как в Windows-тестировании.
+        try:
+            success, encoded = cv2.imencode(
+                ".jpg",
+                plate_image,
+                [cv2.IMWRITE_JPEG_QUALITY, 95],
+            )
+
+            if success:
+                decoded = cv2.imdecode(
+                    encoded,
+                    cv2.IMREAD_COLOR,
+                )
+
+                if decoded is not None:
+                    return self.recognize_variants(decoded)
+
+        except cv2.error:
+            pass
+
+        return ""

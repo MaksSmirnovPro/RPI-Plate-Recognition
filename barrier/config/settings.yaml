@@ -10,18 +10,18 @@ detector:
 
 ocr:
   language: eng
-  min_confidence: 35
+  min_confidence: 0
 
 access:
   allowed_plates_file: config/allowed_plates.txt
-  required_confirmations: 2
-  cooldown_seconds: 10
+  required_confirmations: 1
+  cooldown_seconds: 1
 
 barrier:
   gpio_pin: 18
-  closed_angle: 0
+  closed_angle: 180
   opened_angle: 90
-  open_duration: 5
+  open_duration: 7
 
 processing:
-  interval_seconds: 1.5
+  interval_seconds: 2
