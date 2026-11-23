@@ -62,6 +62,26 @@ pip install -r requirements.txt
 
 `picamera2` и `libcamera` устанавливаются системными пакетами APT. `opencv-python` (GUI-сборка) и `rpi-hardware-pwm` устанавливаются в виртуальное окружение через `requirements.txt`. Запускайте приложение из графической сессии Raspberry Pi OS Desktop, чтобы были доступны `DISPLAY` или `WAYLAND_DISPLAY`.
 
+### Модель детекции автомобилей (отдельно от номерного знака)
+
+Для зелёной рамки автомобиля используется YOLOv8n COCO в ONNX. Модель обучена на COCO; код фильтрует классы 2 (car), 3 (motorcycle), 5 (bus), 7 (truck). Это отдельная модель от специализированного детектора номерных знаков.
+
+Экспортируйте модель на ПК (не на Raspberry Pi), где установлен Python и Ultralytics:
+
+```bash
+python -m pip install ultralytics
+yolo export model=yolov8n.pt format=onnx imgsz=640
+```
+
+Скопируйте полученный `yolov8n.onnx` в `barrier/models/yolov8n.onnx` на Raspberry Pi. Например, если файл передан по SCP:
+
+```bash
+mkdir -p ~/git/rpi-plate-recognition/barrier/models
+# Скопируйте yolov8n.onnx в этот каталог
+```
+
+Не устанавливайте пакет `ultralytics` на Raspberry Pi для обычного запуска: инференс выполняется через уже установленный `onnxruntime`. Проверьте совместимость и лицензионные условия Ultralytics перед использованием.
+
 ### Модель YOLO (готовые веса, без обучения)
 
 Используйте компактную **YOLO11n License Plate Detection** модель, уже дообученную автором репозитория для детекции номерных знаков:
