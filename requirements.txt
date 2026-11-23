@@ -1,5 +1,5 @@
 # Runtime dependencies for Raspberry Pi 5 (64-bit ARM)
-# Picamera2/libcamera and GPIO backend are installed via APT; see README.md.
+# Picamera2/libcamera are installed via APT; see README.md.
 numpy>=1.26,<3
 opencv-python-headless>=4.9,<5
 onnxruntime>=1.17,<2
