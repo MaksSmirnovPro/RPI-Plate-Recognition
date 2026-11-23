@@ -215,25 +215,25 @@
 
 ```mermaid
 flowchart TD
-    A[main()] --> B[LicensePlateSystem.__init__]
-    B --> C[run()]
-    C --> D[Camera.start + Barrier.close]
-    C --> E[GUI/main thread]
-    C --> F[recognition_worker thread]
-    E --> G[Camera.read]
-    G --> H[latest_frame under lock]
+    A["main()"] --> B["LicensePlateSystem.__init__()"]
+    B --> C["run()"]
+    C --> D["Camera.start() + Barrier.close()"]
+    C --> E["GUI / main thread"]
+    C --> F["recognition_worker thread"]
+    E --> G["Camera.read()"]
+    G --> H["Publish latest_frame under lock"]
     H --> E
-    F --> I[Copy latest_frame]
-    I --> J[Vehicle ONNX detector]
-    J --> K[Plate ONNX detector]
-    K --> L[Sort plate boxes]
-    L --> M[OCR crop]
-    M --> N[AccessControl.confirm_plate]
-    N -->|allowed + confirmed + cooldown elapsed| O[Barrier.open_for]
-    J --> P[Barrier.update(vehicle_present)]
-    E --> Q[OpenCV imshow / waitKey]
-    Q -->|Q pressed| R[stop_event]
-    R --> S[Join worker, close GUI, camera and PWM]
+    F --> I["Copy latest_frame under lock"]
+    I --> J["Vehicle ONNX detector"]
+    J --> K["Plate ONNX detector"]
+    K --> L["Sort plate boxes"]
+    L --> M["OCR on plate crop"]
+    M --> N["AccessControl.confirm_plate()"]
+    N -->|allowed, confirmed, cooldown elapsed| O["Barrier.open_for()"]
+    J --> P["Barrier.update(vehicle_present)"]
+    E --> Q["OpenCV imshow() / waitKey()"]
+    Q -->|Q pressed| R["Set stop_event"]
+    R --> S["Join worker; close GUI, camera and PWM"]
 ```
 
 Синхронизация кадров и последних результатов выполняется через один `threading.Lock`. GUI читает последний опубликованный набор детекций; worker не управляет GUI напрямую. Видеопоток не зависит от длительности инференса, но частота обновления результатов ограничена скоростью детекторов и `processing.interval_seconds`.
