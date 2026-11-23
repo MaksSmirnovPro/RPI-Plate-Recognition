@@ -28,8 +28,8 @@ barrier:
   open_duration: 7
 
 display:
-  # false works with opencv-python-headless; set true only with GUI-enabled OpenCV
-  enabled: false
+  # Requires GUI-enabled opencv-python and a Raspberry Pi OS desktop session
+  enabled: true
 
 processing:
   interval_seconds: 2
