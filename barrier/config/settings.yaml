@@ -28,7 +28,7 @@ barrier:
   min_pulse_width_ms: 1.0
   max_pulse_width_ms: 2.0
   # Calibrate with the servo horn disconnected from the mechanism.
-  closed_pulse_width_ms: 2.0
+  closed_pulse_width_ms: 2.05
   opened_pulse_width_ms: 1.5
   closed_angle: 180
   opened_angle: 90
