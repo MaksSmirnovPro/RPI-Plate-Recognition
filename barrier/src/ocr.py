@@ -288,41 +288,54 @@ class PlateOCR:
         )
 
     def recognize(self, plate_image):
-        """Распознаёт номер и возвращает строку либо пустой результат."""
-        if (
-            plate_image is None
-            or plate_image.size == 0
-        ):
-            return ""
+        """
+        Быстрое распознавание для live-потока.
 
+        Раньше выполнялось до 32 запусков Tesseract на один crop
+        (и ещё до 32 при повторной JPEG-проверке). Здесь используется
+        один подготовленный вариант и максимум два PSM-прохода.
+        """
+        if plate_image is None or plate_image.size == 0:
+            return ""
         if plate_image.ndim not in (2, 3):
             return ""
 
-        # Сначала используем исходный crop.
-        result = self.recognize_variants(plate_image)
+        if plate_image.ndim == 3:
+            gray = cv2.cvtColor(plate_image, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = plate_image
 
-        if result:
-            return result
-
-        # Дополнительная проверка JPEG-представления,
-        # как в Windows-тестировании.
-        try:
-            success, encoded = cv2.imencode(
-                ".jpg",
-                plate_image,
-                [cv2.IMWRITE_JPEG_QUALITY, 95],
+        # Небольшие номера увеличиваем только до разумного размера.
+        target_width = max(gray.shape[1], 240)
+        scale = min(3.0, target_width / max(1, gray.shape[1]))
+        if scale > 1.0:
+            gray = cv2.resize(
+                gray, None, fx=scale, fy=scale,
+                interpolation=cv2.INTER_CUBIC,
             )
 
-            if success:
-                decoded = cv2.imdecode(
-                    encoded,
-                    cv2.IMREAD_COLOR,
-                )
+        # Один быстрый бинаризованный вариант вместо 8 дорогих вариантов.
+        gray = cv2.GaussianBlur(gray, (3, 3), 0)
+        _, prepared = cv2.threshold(
+            gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
+        )
+        prepared = cv2.copyMakeBorder(
+            prepared, 12, 12, 18, 18,
+            cv2.BORDER_CONSTANT, value=255,
+        )
 
-                if decoded is not None:
-                    return self.recognize_variants(decoded)
-
-        except cv2.error:
-            pass
+        base_config = (
+            f"--oem 1 -c tessedit_char_whitelist={WHITELIST} "
+            "-c load_system_dawg=0 -c load_freq_dawg=0"
+        )
+        for psm in (7, 8):
+            raw_text = pytesseract.image_to_string(
+                prepared,
+                lang=self.language,
+                config=f"{base_config} --psm {psm}",
+            )
+            plate = self.extract_plate(raw_text)
+            if plate:
+                return plate
 
         return ""
