@@ -12,7 +12,7 @@
 - Raspberry Pi Camera Module 2, подключённая к CSI-разъёму.
 - SG-90 (180°), подключённый к PWM GPIO.
 - Отдельный стабилизированный источник 5 В для SG-90 (ориентировочно 1 А или больше с запасом по пусковому току). Земля источника питания сервопривода должна быть соединена с GND Raspberry Pi.
-- Не питать SG-90 от GPIO. Не подключать сигнальный провод к 5 В. Для сигнала удобно использовать GPIO18 (физический pin 12), поддерживающий аппаратный PWM.
+- Не питать SG-90 от GPIO. Не подключать сигнальный провод к 5 В. Сигнал подключить к **BCM GPIO13 (физический контакт 33)**: на Raspberry Pi 5 этот вывод поддерживает аппаратный PWM.
 
 ### Системное ПО и системные пакеты
 
@@ -55,9 +55,9 @@ pip install -r requirements.txt
 - `opencv-python-headless` — подготовка изображения и обработка рамок без GUI.
 - `onnxruntime` — запуск ONNX-модели на CPU ARM64.
 - `pytesseract` — Python-обёртка для системного Tesseract OCR.
-- `gpiozero` — управление SG-90 через GPIO/PWM.
+- `rpi-hardware-pwm` — управление RP1 аппаратным PWM сервопривода.
 
-`picamera2`, `libcamera`, `gpiozero` и `lgpio` устанавливаются системными пакетами APT. Не устанавливайте поверх них случайные версии из PyPI: на Raspberry Pi важно сохранить совместимость с системным стеком камеры и GPIO.
+`picamera2` и `libcamera` устанавливаются системными пакетами APT. `rpi-hardware-pwm` устанавливается в виртуальное окружение через `requirements.txt`.
 
 ### Модель YOLO (готовые веса, без обучения)
 
@@ -143,7 +143,7 @@ barrier/
 │   ├── detector.py                # PlateDetector — YOLO11n ONNX через ONNX Runtime
 │   ├── ocr.py                     # PlateOCR — Tesseract с 8 вариантами предобработки + голосование
 │   ├── access_control.py          # AccessControl — whitelist, подтверждения, cooldown
-│   ├── barrier.py                 # Barrier — SG-90 через gpiozero.AngularServo
+│   ├── barrier.py                 # Barrier — SG-90 через RP1 hardware PWM
 │   └── logger.py                  # setup_logger — RotatingFileHandler + console
 ├── tests/
 │   ├── test_access_control.py     # whitelist, подтверждения, сброс счётчика
@@ -193,11 +193,33 @@ barrier/windows/
 
 | SG-90 wire | Raspberry Pi GPIO | Physical pin |
 |---|---|---|
-| Signal (orange) | GPIO18 | 12 |
+| Signal (orange) | **BCM GPIO13** | **33** |
 | VCC (red) | External +5V | — |
 | GND (brown) | GND | 6 |
 
-The SG-90 signal wire is connected to GPIO18.
+The servo signal uses RP1 hardware PWM channel 1 on BCM GPIO13. Do not confuse BCM GPIO13 (physical pin 33) with physical pin 13 (BCM GPIO27).
+
+#### Enable hardware PWM on Raspberry Pi OS Bookworm
+
+Add this line to `/boot/firmware/config.txt`, preserving unrelated existing overlays:
+
+```ini
+dtoverlay=pwm-2chan,pin=12,func=4,pin2=13,func2=4
+```
+
+Reboot and inspect the PWM devices:
+
+```bash
+sudo reboot
+ls -l /sys/class/pwm/
+for chip in /sys/class/pwm/pwmchip*; do
+  echo "$chip: $(cat "$chip/npwm") channels"
+done
+```
+
+The project defaults to `pwm_chip: 2` and `pwm_channel: 1` for the Raspberry Pi 5 mapping used by `rpi-hardware-pwm`. If the installed kernel exposes a different chip index, verify the mapping before changing the setting; do not guess.
+
+The servo runs at 50 Hz with a conservative initial pulse range of 1.0–2.0 ms. Calibrate the limits with the servo horn disconnected from the mechanism; SG-90 clones can have different end stops. Do not begin with the wider 0.5–2.5 ms range.
 
 Barrier positions:
 - 180° — closed
@@ -235,7 +257,11 @@ access:
   cooldown_seconds: 1
 
 barrier:
-  gpio_pin: 18
+  pwm_channel: 1
+  pwm_chip: 2
+  frequency_hz: 50
+  min_pulse_width_ms: 1.0
+  max_pulse_width_ms: 2.0
   closed_angle: 180
   opened_angle: 90
   open_duration: 7
@@ -255,7 +281,8 @@ processing:
 | ocr | language | Язык Tesseract (eng) |
 | access | required_confirmations | Сколько раз подряд распознать номер |
 | access | cooldown_seconds | Пауза после открытия шлагбаума |
-| barrier | gpio_pin | GPIO пин сервы (18 = pin 12) |
+| barrier | pwm_channel / pwm_chip | Канал и PWM chip аппаратного PWM (BCM13 на Pi 5: channel 1) |
+| barrier | min_pulse_width_ms / max_pulse_width_ms | Калибруемые границы импульса сервопривода |
 | barrier | open_duration | Время открытого состояния (сек) |
 | processing | interval_seconds | Интервал цикла распознавания |
 
