@@ -36,7 +36,7 @@ barrier:
   opened_pulse_width_ms: 1.5
   closed_angle: 180
   opened_angle: 90
-  open_duration: 7
+  open_duration: 2
 
 display:
   # Requires GUI-enabled opencv-python and a Raspberry Pi OS desktop session
