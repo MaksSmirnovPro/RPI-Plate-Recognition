@@ -19,7 +19,7 @@ access:
 
 barrier:
   pwm_channel: 1
-  pwm_chip: 2
+  pwm_chip: 0
   frequency_hz: 50
   min_pulse_width_ms: 1.0
   max_pulse_width_ms: 2.0
