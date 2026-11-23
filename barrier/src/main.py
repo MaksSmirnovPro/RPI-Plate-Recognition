@@ -220,7 +220,7 @@ class LicensePlateSystem:
                     ocr_started = time.perf_counter()
                     plate = self.ocr.recognize(crop)
                     ocr_elapsed = time.perf_counter() - ocr_started
-                    self.logger.debug("OCR completed in %.3f s", ocr_elapsed)
+                    self.logger.info("OCR completed in %.3f s", ocr_elapsed)
 
                     if not plate:
                         continue
