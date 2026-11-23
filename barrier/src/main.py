@@ -85,7 +85,11 @@ class LicensePlateSystem:
         barrier_cfg = self.config["barrier"]
 
         self.barrier = Barrier(
-            gpio_pin=barrier_cfg.get("gpio_pin", 18),
+            pwm_channel=barrier_cfg.get("pwm_channel", 1),
+            pwm_chip=barrier_cfg.get("pwm_chip", 2),
+            frequency_hz=barrier_cfg.get("frequency_hz", 50),
+            min_pulse_width_ms=barrier_cfg.get("min_pulse_width_ms", 1.0),
+            max_pulse_width_ms=barrier_cfg.get("max_pulse_width_ms", 2.0),
             closed_angle=barrier_cfg.get("closed_angle", 180),
             opened_angle=barrier_cfg.get("opened_angle", 90),
             open_duration=barrier_cfg.get("open_duration", 10),
