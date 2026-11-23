@@ -9,7 +9,7 @@ import yaml
 
 from src.camera import Camera
 from src.detector import PlateDetector
-from src.ocr import PlateOCR
+from src.ocr import PlateOCR, FastPlateOCR
 from src.access_control import AccessControl
 from src.barrier import Barrier
 from src.logger import setup_logger
@@ -73,10 +73,19 @@ class LicensePlateSystem:
         # OCR
         ocr_cfg = self.config["ocr"]
 
-        self.ocr = PlateOCR(
-            language=ocr_cfg.get("language", "eng"),
-            min_confidence=ocr_cfg.get("min_confidence", 0),
-        )
+        ocr_backend = ocr_cfg.get("backend", "tesseract").lower()
+        if ocr_backend == "fast_plate_ocr":
+            self.ocr = FastPlateOCR(
+                model_name=ocr_cfg.get("model_name", "cct-xs-v2-global-model"),
+                device=ocr_cfg.get("device", "cpu"),
+            )
+        elif ocr_backend == "tesseract":
+            self.ocr = PlateOCR(
+                language=ocr_cfg.get("language", "eng"),
+                min_confidence=ocr_cfg.get("min_confidence", 0),
+            )
+        else:
+            raise ValueError(f"Unsupported OCR backend: {ocr_backend}")
 
         # Access control
         access_cfg = self.config["access"]
@@ -173,8 +182,11 @@ class LicensePlateSystem:
 
             try:
                 # Both detectors run in the worker; GUI keeps rendering camera frames.
+                detection_started = time.perf_counter()
                 vehicle_detections = self.vehicle_detector.detect(frame)
                 detections = self.detector.detect(frame)
+                detection_elapsed = time.perf_counter() - detection_started
+                self.logger.info("YOLO detection completed in %.3f s", detection_elapsed)
                 with self.frame_lock:
                     self.latest_vehicle_detections = vehicle_detections
                     self.latest_plate_detections = detections
