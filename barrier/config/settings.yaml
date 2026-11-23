@@ -13,6 +13,10 @@ detector:
   vehicle_nms_threshold: 0.45
 
 ocr:
+  # Experimental neural OCR; switch to "tesseract" to use the stable backend.
+  backend: fast_plate_ocr
+  model_name: cct-xs-v2-global-model
+  device: cpu
   language: eng
   min_confidence: 0
 
@@ -39,4 +43,4 @@ display:
   enabled: true
 
 processing:
-  interval_seconds: 2
+  interval_seconds: 0.5
