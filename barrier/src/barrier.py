@@ -15,6 +15,8 @@ class HardwareServo:
         min_pulse_width_ms=1.0,
         max_pulse_width_ms=2.0,
         initial_angle=180,
+        closed_pulse_width_ms=None,
+        opened_pulse_width_ms=None,
     ):
         if frequency_hz <= 0:
             raise ValueError("frequency_hz must be positive")
@@ -27,6 +29,11 @@ class HardwareServo:
 
         self.min_pulse_width_ms = float(min_pulse_width_ms)
         self.max_pulse_width_ms = float(max_pulse_width_ms)
+        self.closed_pulse_width_ms = closed_pulse_width_ms
+        self.opened_pulse_width_ms = opened_pulse_width_ms
+        for label, pulse in (("closed", closed_pulse_width_ms), ("opened", opened_pulse_width_ms)):
+            if pulse is not None and not 0 < float(pulse) < self.period_ms:
+                raise ValueError(f"{label} pulse width must be between 0 and PWM period")
         self._angle = max(0.0, min(180.0, float(initial_angle)))
         self._pwm = HardwarePWM(
             pwm_channel=int(pwm_channel),
@@ -41,6 +48,12 @@ class HardwareServo:
             self.max_pulse_width_ms - self.min_pulse_width_ms
         ) * angle / 180.0
         return pulse_ms / self.period_ms * 100.0
+
+    def set_pulse_width_ms(self, pulse_width_ms):
+        pulse_width_ms = float(pulse_width_ms)
+        if not 0 < pulse_width_ms < self.period_ms:
+            raise ValueError("Pulse width must be between 0 and PWM period")
+        self._pwm.change_duty_cycle(pulse_width_ms / self.period_ms * 100.0)
 
     @property
     def angle(self):
@@ -67,6 +80,8 @@ class Barrier:
         closed_angle=180,
         opened_angle=90,
         open_duration=5.0,
+        closed_pulse_width_ms=None,
+        opened_pulse_width_ms=None,
     ):
         self.closed_angle = closed_angle
         self.opened_angle = opened_angle
@@ -81,18 +96,26 @@ class Barrier:
             min_pulse_width_ms=min_pulse_width_ms,
             max_pulse_width_ms=max_pulse_width_ms,
             initial_angle=self.closed_angle,
+            closed_pulse_width_ms=closed_pulse_width_ms,
+            opened_pulse_width_ms=opened_pulse_width_ms,
         )
         self.close()
 
     def open(self):
         """Открывает шлагбаум и продлевает время его открытого состояния."""
-        self.servo.angle = self.opened_angle
+        if self.servo.opened_pulse_width_ms is not None:
+            self.servo.set_pulse_width_ms(self.servo.opened_pulse_width_ms)
+        else:
+            self.servo.angle = self.opened_angle
         self.is_open = True
         self.close_at = time.monotonic() + self.open_duration
 
     def close(self):
         """Закрывает шлагбаум."""
-        self.servo.angle = self.closed_angle
+        if self.servo.closed_pulse_width_ms is not None:
+            self.servo.set_pulse_width_ms(self.servo.closed_pulse_width_ms)
+        else:
+            self.servo.angle = self.closed_angle
         self.is_open = False
         self.close_at = None
 
