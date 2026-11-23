@@ -15,7 +15,7 @@ detector:
 ocr:
   # Experimental neural OCR; switch to "tesseract" to use the stable backend.
   backend: fast_plate_ocr
-  model_name: cct-xs-v2-global-model
+  model_name: global-plates-mobile-vit-v2-model
   device: cpu
   language: eng
   min_confidence: 0
