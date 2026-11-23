@@ -1,10 +1,10 @@
 # Runtime dependencies for Raspberry Pi 5 (64-bit ARM)
+# GUI-enabled OpenCV is required for the live preview window.
 # Picamera2/libcamera are installed via APT; see README.md.
 numpy>=1.26,<3
-opencv-python-headless>=4.9,<5
+opencv-python>=4.9,<5
 onnxruntime>=1.17,<2
 pytesseract>=0.3.10,<0.4
 PyYAML>=6.0,<7
 huggingface_hub>=0.23,<2  # загрузка готовых весов из Hugging Face
-picamera2
 rpi-hardware-pwm>=0.2.2,<0.3
