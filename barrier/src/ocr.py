@@ -354,26 +354,22 @@ class PlateOCR:
 
 
 class FastPlateOCR:
-    """Neural plate-text recognizer backed by fast-plate-ocr / ONNX Runtime.
-
-    The model expects a plate crop, so the existing YOLO plate detector remains
-    unchanged. Model files are downloaded/cached by fast-plate-ocr on first run.
-    """
+    """Neural plate-text recognizer using fast-plate-ocr 0.3.x / ONNX Runtime."""
 
     def __init__(
         self,
-        model_name: str = "cct-xs-v2-global-model",
+        model_name: str = "global-plates-mobile-vit-v2-model",
         device: str = "cpu",
     ):
         try:
-            from fast_plate_ocr import LicensePlateRecognizer
+            from fast_plate_ocr import ONNXPlateRecognizer
         except ImportError as exc:
             raise RuntimeError(
-                "fast-plate-ocr is selected but not installed. "
-                "Install requirements.txt in this branch."
+                "Could not import ONNXPlateRecognizer. "
+                "This branch requires fast-plate-ocr 0.3.x."
             ) from exc
 
-        self.model = LicensePlateRecognizer(
+        self.model = ONNXPlateRecognizer(
             hub_ocr_model=model_name,
             device=device,
         )
@@ -381,15 +377,16 @@ class FastPlateOCR:
     def recognize(self, plate_image):
         if plate_image is None or plate_image.size == 0:
             return ""
-        if plate_image.ndim == 2:
-            image = cv2.cvtColor(plate_image, cv2.COLOR_GRAY2RGB)
-        elif plate_image.ndim == 3:
-            image = cv2.cvtColor(plate_image, cv2.COLOR_BGR2RGB)
+        if plate_image.ndim == 3:
+            image = cv2.cvtColor(plate_image, cv2.COLOR_BGR2GRAY)
+        elif plate_image.ndim == 2:
+            image = plate_image
         else:
             return ""
 
-        prediction = self.model.run_one(image)
-        # Reuse the project's Russian plate normalization and positional
-        # character correction. Reject outputs that do not match the format.
-        return PlateOCR.extract_plate(prediction.plate)
-
+        # fast-plate-ocr 0.3.x expects a grayscale NumPy array and returns
+        # a list of strings, even when only one image is passed.
+        predictions = self.model.run(image)
+        if not predictions:
+            return ""
+        return PlateOCR.extract_plate(str(predictions[0]))
