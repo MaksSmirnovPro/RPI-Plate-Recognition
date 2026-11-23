@@ -24,6 +24,10 @@ class LicensePlateSystem:
         self.logger = setup_logger()
         self.config = self.load_config()
 
+        # Display is optional: keep False when using opencv-python-headless.
+        display_cfg = self.config.get("display", {})
+        self.display_enabled = bool(display_cfg.get("enabled", False))
+
         # Camera
         camera_cfg = self.config["camera"]
 
@@ -289,14 +293,18 @@ class LicensePlateSystem:
 
             window_name = "License Plate Recognition"
 
-            cv2.namedWindow(
-                window_name,
-                cv2.WINDOW_NORMAL,
-            )
-
-            self.logger.info(
-                "Video window started. Press Q to exit."
-            )
+            if self.display_enabled:
+                cv2.namedWindow(
+                    window_name,
+                    cv2.WINDOW_NORMAL,
+                )
+                self.logger.info(
+                    "Video window started. Press Q to exit."
+                )
+            else:
+                self.logger.info(
+                    "Display disabled; running in headless mode. Press Ctrl+C to exit."
+                )
 
             while not self.stop_event.is_set():
 
@@ -309,31 +317,27 @@ class LicensePlateSystem:
                     continue
 
                 with self.frame_lock:
-
                     self.latest_frame = frame.copy()
 
-                    if (
-                        self.result_frame is not None
-                        and time.monotonic() < self.result_until
-                    ):
-                        display_frame = self.result_frame.copy()
+                    if self.display_enabled:
+                        if (
+                            self.result_frame is not None
+                            and time.monotonic() < self.result_until
+                        ):
+                            display_frame = self.result_frame.copy()
+                        else:
+                            self.result_frame = None
+                            display_frame = frame.copy()
 
-                    else:
-                        self.result_frame = None
-                        display_frame = frame.copy()
+                if self.display_enabled:
+                    cv2.imshow(window_name, display_frame)
+                    key = cv2.waitKey(1) & 0xFF
 
-                cv2.imshow(
-                    window_name,
-                    display_frame,
-                )
-
-                key = cv2.waitKey(1) & 0xFF
-
-                if key == ord("q"):
-                    self.logger.info(
-                        "Exit requested by user"
-                    )
-                    break
+                    if key == ord("q"):
+                        self.logger.info(
+                            "Exit requested by user"
+                        )
+                        break
 
         except KeyboardInterrupt:
             self.logger.info("Keyboard interrupt")
@@ -349,12 +353,13 @@ class LicensePlateSystem:
             if self.worker is not None:
                 self.worker.join(timeout=5.0)
 
-            try:
-                cv2.destroyAllWindows()
-            except cv2.error:
-                self.logger.warning(
-                    "OpenCV windows could not be closed"
-                )
+            if self.display_enabled:
+                try:
+                    cv2.destroyAllWindows()
+                except cv2.error:
+                    self.logger.warning(
+                        "OpenCV windows could not be closed"
+                    )
 
             try:
                 self.camera.stop()
