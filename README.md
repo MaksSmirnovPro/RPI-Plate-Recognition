@@ -114,7 +114,7 @@ barrier/models/yolov8n.onnx
 
 - Модель: <https://huggingface.co/morsetechlab/yolov11-license-plate-detection>
 - Файл: `license-plate-finetune-v1n.onnx`
-- Путь: `barrier/models/license_plate_yolo11n.onnx` или путь, указанный в `barrier/config/settings.yaml`.
+- Путь: `barrier/models/license-plate-finetune-v1n.onnx` или путь, указанный в `barrier/config/settings.yaml`.
 
 Скачайте файл через Hugging Face Hub:
 
@@ -129,7 +129,7 @@ source = hf_hub_download(
     repo_id="morsetechlab/yolov11-license-plate-detection",
     filename="license-plate-finetune-v1n.onnx",
 )
-target = Path("models/license_plate_yolo11n.onnx")
+target = Path("models/license-plate-finetune-v1n.onnx")
 target.write_bytes(Path(source).read_bytes())
 print(f"Saved: {target.resolve()}")
 PY
