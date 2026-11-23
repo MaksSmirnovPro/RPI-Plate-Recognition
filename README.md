@@ -11,7 +11,7 @@
 - **FastPlateOCR / Tesseract** — распознаёт символы только внутри crop номерного знака (выбор backend задаётся в конфигурации).
 - **AccessControl** — нормализует строку и выполняет проверку по `barrier/config/allowed_plates.txt`.
 
-В экспериментальной ветке по умолчанию используется `fast-plate-ocr` (компактная нейросеть через ONNX Runtime) вместо Tesseract. Старый Tesseract backend сохранён как резервный вариант и выбирается через `ocr.backend: tesseract`.
+В экспериментальной ветке по умолчанию используется `fast-plate-ocr` 0.3.x (нейросеть через ONNX Runtime, класс `ONNXPlateRecognizer`) вместо Tesseract. Старый Tesseract backend сохранён как резервный вариант и выбирается через `ocr.backend: tesseract`.
 
 ## Аппаратная часть
 
@@ -71,7 +71,7 @@ python -m pip install -r requirements.txt
 | `numpy` | массивы и обработка кадров |
 | `opencv-python` | компьютерное зрение и GUI |
 | `onnxruntime` | инференс обеих YOLO ONNX-моделей на CPU |
-| `pytesseract` | резервный OCR backend Tesseract |\n| `fast-plate-ocr[onnx]` | нейросетевой OCR номерного знака через ONNX Runtime |
+| `pytesseract` | резервный OCR backend Tesseract |\n| `fast-plate-ocr` | нейросетевой OCR номерного знака через ONNX Runtime |
 | `PyYAML` | чтение настроек |
 | `huggingface_hub` | загрузка готовых весов |
 | `rpi-hardware-pwm` | аппаратный PWM для сервопривода |
@@ -144,7 +144,7 @@ PY
 - `detector.model_path` — модель номерных знаков.
 - `detector.vehicle_model_path` — COCO модель транспорта.
 - `detector.*_confidence` — пороги детекции.
-- `ocr.backend` — `fast_plate_ocr` или `tesseract`.\n- `ocr.model_name` — имя модели FastPlateOCR; по умолчанию `cct-xs-v2-global-model`.\n- `ocr.device` — `cpu` для Raspberry Pi.\n- `ocr.language` — язык Tesseract, если выбран резервный backend.
+- `ocr.backend` — `fast_plate_ocr` или `tesseract`.\n- `ocr.model_name` — имя модели FastPlateOCR; по умолчанию `global-plates-mobile-vit-v2-model`.\n- `ocr.device` — `cpu` для Raspberry Pi.\n- `ocr.language` — язык Tesseract, если выбран резервный backend.
 - `access.allowed_plates_file` — локальный whitelist.
 - `access.required_confirmations` — количество последовательных подтверждений.
 - `processing.interval_seconds` — пауза между циклами фоновой обработки (в этой экспериментальной ветке 0.5 секунды).
