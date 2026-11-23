@@ -329,12 +329,24 @@ class PlateOCR:
             "-c load_system_dawg=0 -c load_freq_dawg=0"
         )
         for psm in (7, 8):
-            raw_text = pytesseract.image_to_string(
+            data = pytesseract.image_to_data(
                 prepared,
                 lang=self.language,
                 config=f"{base_config} --psm {psm}",
+                output_type=Output.DICT,
             )
-            plate = self.extract_plate(raw_text)
+            accepted_words = []
+            for token, confidence in zip(data["text"], data["conf"]):
+                token = self.normalize(token)
+                if not token:
+                    continue
+                try:
+                    score = float(confidence)
+                except (TypeError, ValueError):
+                    continue
+                if score >= self.min_confidence:
+                    accepted_words.append(token)
+            plate = self.extract_plate("".join(accepted_words))
             if plate:
                 return plate
 
