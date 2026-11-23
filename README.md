@@ -129,7 +129,7 @@ source = hf_hub_download(
     repo_id="morsetechlab/yolov11-license-plate-detection",
     filename="license-plate-finetune-v1n.onnx",
 )
-target = Path("models/license-plate-finetune-v1n.onnx")
+target = Path("models/license_plate_yolo11n.onnx")
 target.write_bytes(Path(source).read_bytes())
 print(f"Saved: {target.resolve()}")
 PY
