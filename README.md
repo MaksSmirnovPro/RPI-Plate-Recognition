@@ -1,31 +1,100 @@
-# Raspberry Pi — распознавание автомобильных номеров и управление шлагбаумом
+# RPI-Plate-Recognition — распознавание автомобильных номеров и управление шлагбаумом
 
-Проект для Raspberry Pi 5, камеры IMX219 / Camera Module 2 и сервопривода SG-90. Камера непрерывно показывает изображение в GUI; фоновые модели обнаруживают транспорт и номерные знаки. OCR читает номер, AccessControl сравнивает его с локальным whitelist, а разрешённый номер открывает шлагбаум.
+Система для Raspberry Pi 5, камеры IMX219 / Camera Module 2 и демонстрационного сервопривода SG-90. Приложение показывает видеопоток в OpenCV GUI, параллельно обнаруживает транспорт и номерные знаки, распознаёт номер, проверяет его по локальному списку разрешённых номеров и управляет сервоприводом через аппаратный PWM.
 
-## Как устроена детекция
+> **Назначение:** учебный/демонстрационный макет. SG-90 нельзя использовать для управления тяжёлой реальной стрелой шлагбаума.
 
-Используются две отдельные ONNX-модели:
+## Возможности
 
-- **YOLOv8n COCO** — обнаруживает транспортные средства (car, motorcycle, bus, truck); зелёная рамка.
-- **YOLO11n License Plate** — обнаруживает область номерного знака; синяя рамка.
-- **FastPlateOCR / Tesseract** — распознаёт символы только внутри crop номерного знака (выбор backend задаётся в конфигурации).
-- **AccessControl** — нормализует строку и выполняет проверку по `barrier/config/allowed_plates.txt`.
+- Live preview с камеры в отдельном окне OpenCV.
+- Независимый фоновый поток распознавания: GUI не ждёт завершения инференса.
+- Два ONNX-детектора: транспортные средства и номерные знаки.
+- Переключаемый OCR: FastPlateOCR (основной backend в текущей конфигурации) или Tesseract.
+- Нормализация российских регистрационных знаков и проверка локального whitelist.
+- Подтверждение номера заданное число последовательных циклов и cooldown.
+- Управление SG-90 через RP1 hardware PWM на Raspberry Pi 5.
+- Логи времени инференса детекторов и OCR, а также событий доступа.
 
-В экспериментальной ветке по умолчанию используется `fast-plate-ocr` 0.3.x (нейросеть через ONNX Runtime, класс `ONNXPlateRecognizer`) вместо Tesseract. Старый Tesseract backend сохранён как резервный вариант и выбирается через `ocr.backend: tesseract`.
+## Архитектура обработки
+
+1. `Camera` получает кадры от Picamera2 в разрешении, заданном в YAML, и преобразует RGB в BGR для OpenCV.
+2. Главный поток непрерывно обновляет кадр и отображает live preview. На кадре рисуются зелёные рамки транспорта, синие/оранжевые рамки номерных знаков и последний распознанный текст.
+3. `recognition_worker` в отдельном потоке берёт копию последнего кадра.
+4. Детектор транспорта YOLOv8n COCO ищет классы car, motorcycle, bus и truck (class IDs 2, 3, 5, 7). Отдельный YOLO11 detector ищет номерные знаки.
+5. Детекции номеров сортируются по confidence. Для первого корректного crop выполняется OCR; за один цикл обрабатывается не более одного номера.
+6. `AccessControl` нормализует строку и проверяет whitelist. Неизвестный/пустой номер сбрасывает счётчик подтверждений.
+7. При достижении `required_confirmations` и истечении cooldown система вызывает неблокирующий `Barrier.open_for()`.
+8. Пока детектор транспорта видит транспортное средство, уже открытый шлагбаум удерживается открытым; после исчезновения транспорта запускается/продолжается таймер закрытия.
+
+Это не полноценная система безопасности: наличие автомобиля само по себе не даёт разрешение на въезд. Разрешение выдаётся только после успешного OCR и проверки whitelist.
+
+## Структура репозитория
+
+```text
+.
+├── README.md
+├── Architecture.md
+├── requirements.txt
+├── requirements-model-tools.txt
+├── barrier/
+│   ├── config/
+│   │   ├── settings.yaml
+│   │   └── allowed_plates.txt
+│   ├── models/
+│   │   ├── license-plate-finetune-v1n.onnx
+│   │   ├── license-plate-finetune-v1n.pt
+│   │   ├── license-plate-finetune-v1s.onnx
+│   │   ├── license-plate-finetune-v1m.onnx
+│   │   ├── license-plate-finetune-v1m.pt
+│   │   ├── license-plate-finetune-v1l.onnx
+│   │   ├── yolov8n.onnx
+│   │   └── yolov8n.pt
+│   ├── src/
+│   │   ├── __init__.py
+│   │   ├── main.py
+│   │   ├── camera.py
+│   │   ├── detector.py
+│   │   ├── ocr.py
+│   │   ├── access_control.py
+│   │   ├── barrier.py
+│   │   └── logger.py
+│   ├── tests/
+│   │   ├── test_access_control.py
+│   │   └── test_plate_normalization.py
+│   └── windows/
+│       ├── README.md
+│       ├── config/settings.yaml
+│       ├── dataset/images/
+│       ├── dataset/labels.csv
+│       ├── requirements.txt
+│       ├── src/
+│       │   ├── detector.py
+│       │   ├── ocr.py
+│       │   ├── evaluate.py
+│       │   └── main.py
+│       └── tests/
+└── .gitignore
+```
+
+Файлы моделей, перечисленные в дереве выше, **уже присутствуют в текущем Git-репозитории**. Их фактический размер и список приведены в `Architecture.md`. В отличие от runtime-каталога, `barrier/windows/results/`, `barrier/data/` и виртуальные окружения являются генерируемыми/локальными данными и не входят в исходный состав репозитория.
 
 ## Аппаратная часть
 
 - Raspberry Pi 5 с 64-bit Raspberry Pi OS Desktop.
 - Камера IMX219 / Camera Module 2, подключённая к CSI.
-- SG-90 для демонстрационного макета.
-- Отдельный стабилизированный источник 5 В для сервопривода; соединить GND источника с GND Raspberry Pi.
-- Сигнал сервопривода: **BCM GPIO13, физический контакт 33**. Не путать BCM GPIO13 с физическим контактом 13.
+- SG-90 для лёгкого демонстрационного макета.
+- Отдельный стабилизированный источник 5 В для сервопривода; объедините GND источника и GND Raspberry Pi.
+- Сигнал сервопривода: **BCM GPIO13, физический контакт 33**. BCM GPIO13 — это не физический контакт 13.
 
-SG-90 не предназначен для управления тяжёлой реальной стрелой. Для реального шлагбаума используйте привод и контроллер соответствующего класса, концевые выключатели и независимую защиту от защемления.
+Проверьте подключение и PWM overlay по документации Raspberry Pi OS для вашей версии системы. После настройки проверьте доступные PWM-устройства через `/sys/class/pwm/` и назначение пина командой `pinctrl get 13`. Не предполагайте, что индекс `pwmchip` одинаков на всех ядрах/overlay.
 
-## Системные пакеты
+В текущем `settings.yaml` задано: PWM chip 0, channel 1, 50 Hz. Параметры импульсов открытия/закрытия индивидуально откалиброваны. В частности, `closed_pulse_width_ms: 2.35` превышает общий диапазон `min_pulse_width_ms: 1.0` — это допустимо в текущем коде, поскольку явно заданные импульсы проверяются отдельно на попадание в период PWM, а не ограничиваются общим диапазоном углов. Не переносите эту калибровку на другой сервопривод без проверки.
 
-Picamera2 и libcamera устанавливаются через APT, а не pip:
+Перед калибровкой отсоедините рог/тягу от механизма. Увеличивайте импульс малыми шагами; остановитесь при гуле, нагреве или механическом упоре.
+
+## Установка на Raspberry Pi
+
+Picamera2 и libcamera следует устанавливать системными пакетами APT, а не pip:
 
 ```bash
 sudo apt update
@@ -37,13 +106,13 @@ sudo apt install -y \
   libgtk-3-0 libgl1 libglib2.0-0
 ```
 
-Проверьте камеру:
+Проверьте обнаружение камеры:
 
 ```bash
 rpicam-hello --list-cameras
 ```
 
-Для модуля Picamera2 создавайте venv с `--system-site-packages`, чтобы приложение видело системный пакет:
+Создайте виртуальное окружение с доступом к системным пакетам — это позволяет использовать установленный через APT Picamera2:
 
 ```bash
 git clone https://github.com/MaksSmirnovPro/RPI-Plate-Recognition.git
@@ -53,116 +122,85 @@ source .venv/bin/activate
 python -m pip install --upgrade pip
 ```
 
-Если ранее был установлен headless OpenCV, удалите конфликтующие варианты и поставьте зависимости проекта:
+Установите зависимости:
 
 ```bash
 python -m pip uninstall -y opencv-python-headless opencv-contrib-python-headless
 python -m pip install -r requirements.txt
 ```
 
-Используется GUI-сборка `opencv-python`, поскольку приложение открывает live preview через `cv2.imshow`. Не устанавливайте одновременно `opencv-python-headless`.
+Для live preview нужна GUI-сборка `opencv-python`, не headless. Не устанавливайте одновременно несколько конфликтующих вариантов OpenCV.
 
-## Python-зависимости
+### Зависимости
 
-Файл `requirements.txt` содержит runtime-пакеты:
-
-| Пакет | Назначение |
+| Файл/пакет | Назначение |
 |---|---|
-| `numpy` | массивы и обработка кадров |
-| `opencv-python` | компьютерное зрение и GUI |
-| `onnxruntime` | инференс обеих YOLO ONNX-моделей на CPU |
-| `pytesseract` | резервный OCR backend Tesseract |\n| `fast-plate-ocr` | нейросетевой OCR номерного знака через ONNX Runtime |
-| `PyYAML` | чтение настроек |
-| `huggingface_hub` | загрузка готовых весов |
-| `rpi-hardware-pwm` | аппаратный PWM для сервопривода |
+| `requirements.txt` | Runtime-зависимости Raspberry Pi |
+| `numpy` | Массивы и обработка изображений |
+| `opencv-python` | OpenCV, детекция/NMS и GUI preview |
+| `onnxruntime` | CPU-инференс детекторов ONNX |
+| `fast-plate-ocr` | Нейросетевой OCR через ONNX Runtime |
+| `pytesseract` | Альтернативный OCR backend |
+| `PyYAML` | Загрузка YAML-конфигурации |
+| `huggingface_hub` | Загрузка модели OCR при первом запуске |
+| `rpi-hardware-pwm` | Аппаратный PWM Raspberry Pi 5 |
+| `requirements-model-tools.txt` | Необязательные инструменты экспорта YOLO на ПК (`ultralytics`) |
 
-**Важно про YOLO:** в Raspberry Pi устанавливаются ONNX Runtime и OpenCV. Пакет `ultralytics` и PyTorch не нужны для запуска приложения: они требуются только для экспорта модели в ONNX на отдельном компьютере. Для этого есть необязательный файл `requirements-model-tools.txt`.
-
-Установка инструментов экспорта на ПК:
-
-```bash
-python -m pip install -r requirements-model-tools.txt
-yolo export model=yolov8n.pt format=onnx imgsz=640
-```
-
-Полученный `yolov8n.onnx` скопируйте в `barrier/models/yolov8n.onnx`.
+PyTorch и Ultralytics не нужны на Raspberry Pi для запуска ONNX-моделей. `requirements-model-tools.txt` предназначен только для рабочего ПК, если требуется экспортировать/подготовить модель.
 
 ## Модели
 
-Обе модели должны находиться в `barrier/models/`. Бинарные веса не хранятся в Git.
+Runtime загружает модели по путям из `barrier/config/settings.yaml` относительно каталога `barrier/`.
 
-### Детектор автомобилей
+| Назначение | Файл в репозитории | Примечание |
+|---|---|---|
+| Детектор номеров | `license-plate-finetune-v1n.onnx` | Текущий runtime-файл, YOLO11n |
+| Варианты детектора номеров | `license-plate-finetune-v1s.onnx`, `v1m.onnx`, `v1l.onnx` | Дополнительные размеры |
+| Исходные веса plate detector | `license-plate-finetune-v1n.pt`, `v1m.pt` | Веса PyTorch; runtime их не загружает |
+| Детектор транспорта | `yolov8n.onnx` | COCO, классы 2/3/5/7 |
+| Исходные веса транспорта | `yolov8n.pt` | Для разработки/экспорта, runtime использует ONNX |
 
-Экспортируйте YOLOv8n COCO на ПК с Ultralytics:
+Все перечисленные файлы находятся в `barrier/models/` на текущей ветке. Runtime требует как минимум `license-plate-finetune-v1n.onnx` и `yolov8n.onnx`.
+
+Если нужно заново экспортировать YOLOv8n на ПК:
 
 ```bash
 python -m pip install -r requirements-model-tools.txt
 yolo export model=yolov8n.pt format=onnx imgsz=640
 ```
 
-Скопируйте файл `yolov8n.onnx` в:
+Затем поместите результат в `barrier/models/yolov8n.onnx`. Для замены plate detector убедитесь, что выход ONNX совместим с парсером в `barrier/src/detector.py`.
 
-```text
-barrier/models/yolov8n.onnx
-```
+FastPlateOCR загружает OCR-модель из Hugging Face Hub при инициализации, если она ещё не закеширована. Первый запуск требует доступа к сети.
 
-Код выбирает COCO-классы 2, 3, 5 и 7: car, motorcycle, bus, truck.
+## Конфигурация
 
-### Детектор номерных знаков
+Основной файл: `barrier/config/settings.yaml`.
 
-Используется готовая модель YOLO11n License Plate Detection:
+| Секция | Ключи | Назначение |
+|---|---|---|
+| `camera` | `width`, `height` | Разрешение Picamera2 |
+| `detector` | `model_path`, `input_size`, `confidence`, `nms_threshold` | Детектор номера |
+| `detector` | `vehicle_model_path`, `vehicle_input_size`, `vehicle_confidence`, `vehicle_nms_threshold` | Детектор транспорта |
+| `ocr` | `backend` | `fast_plate_ocr` или `tesseract` |
+| `ocr` | `model_name`, `device` | FastPlateOCR model ID и устройство |
+| `ocr` | `language`, `min_confidence` | Параметры Tesseract |
+| `access` | `allowed_plates_file` | Путь к whitelist относительно `barrier/` |
+| `access` | `required_confirmations`, `cooldown_seconds` | Подтверждения и интервал между разрешениями |
+| `barrier` | `pwm_chip`, `pwm_channel`, `frequency_hz` | PWM-устройство |
+| `barrier` | `min_pulse_width_ms`, `max_pulse_width_ms` | Диапазон преобразования угла |
+| `barrier` | `closed_pulse_width_ms`, `opened_pulse_width_ms` | Опциональные точные импульсы для двух положений |
+| `barrier` | `closed_angle`, `opened_angle`, `open_duration` | Углы fallback и длительность открытия |
+| `display` | `enabled` | Включение OpenCV GUI |
+| `processing` | `interval_seconds` | Пауза между циклами фоновой обработки |
 
-- Модель: <https://huggingface.co/morsetechlab/yolov11-license-plate-detection>
-- Файл: `license-plate-finetune-v1n.onnx`
-- Путь: `barrier/models/license-plate-finetune-v1n.onnx` или путь, указанный в `barrier/config/settings.yaml`.
+Whitelist хранится в `barrier/config/allowed_plates.txt`: один номер на строку. Пустые строки и строки, начинающиеся с `#`, игнорируются. Сравнение выполняется после нормализации: верхний регистр, перевод визуально совпадающих кириллических букв в латиницу и удаление разделителей.
 
-Скачайте файл через Hugging Face Hub:
-
-```bash
-cd barrier
-mkdir -p models
-python - <<'PY'
-from huggingface_hub import hf_hub_download
-from pathlib import Path
-
-source = hf_hub_download(
-    repo_id="morsetechlab/yolov11-license-plate-detection",
-    filename="license-plate-finetune-v1n.onnx",
-)
-target = Path("models/license-plate-finetune-v1n.onnx")
-target.write_bytes(Path(source).read_bytes())
-print(f"Saved: {target.resolve()}")
-PY
-```
-
-Проверьте, что путь в `config/settings.yaml` совпадает с фактическим именем файла. Перед использованием сторонних весов проверьте их лицензию и совместимость ONNX-входа/выхода с детектором проекта.
-
-## Настройки
-
-Основной конфигурационный файл: `barrier/config/settings.yaml`.
-
-- `detector.model_path` — модель номерных знаков.
-- `detector.vehicle_model_path` — COCO модель транспорта.
-- `detector.*_confidence` — пороги детекции.
-- `ocr.backend` — `fast_plate_ocr` или `tesseract`.\n- `ocr.model_name` — имя модели FastPlateOCR; по умолчанию `global-plates-mobile-vit-v2-model`.\n- `ocr.device` — `cpu` для Raspberry Pi.\n- `ocr.language` — язык Tesseract, если выбран резервный backend.
-- `access.allowed_plates_file` — локальный whitelist.
-- `access.required_confirmations` — количество последовательных подтверждений.
-- `processing.interval_seconds` — пауза между циклами фоновой обработки (в этой экспериментальной ветке 0.5 секунды).
-- `display.enabled` — GUI preview.
-- `barrier.pwm_chip` / `pwm_channel` — PWM controller и канал.
-- `closed_pulse_width_ms` / `opened_pulse_width_ms` — индивидуальная калибровка положений сервопривода.
-
-Whitelist: один номер на строку в `barrier/config/allowed_plates.txt`. Используйте только те номера, которым действительно разрешён въезд.
-
-## PWM и подключение SG-90
-
-В текущей конфигурации проекта для Raspberry Pi 5 используются BCM GPIO13 (physical pin 33), PWM channel 1 и pwmchip 0. Индекс pwmchip может зависеть от ядра/overlay; проверьте реальное соответствие на устройстве, не меняйте индекс наугад.
-
-Если требуется включить PWM overlay, сначала проверьте актуальную документацию Raspberry Pi OS и содержимое `/boot/firmware/config.txt`, сохраняя существующие настройки. После изменения перезагрузите Pi и проверьте `/sys/class/pwm/` и `pinctrl get 13`.
-
-Сервопривод работает на 50 Hz. Перед калибровкой отсоедините тягу/рог от механизма. У разных SG-90 диапазон отличается; увеличивайте импульс малыми шагами и немедленно остановитесь при гуле, нагреве или упоре. Не пытайтесь силой довести сервопривод до механического предела.
+Текущая конфигурация использует `fast_plate_ocr`, CPU и интервал обработки 0.5 секунды. Для переключения на Tesseract установите `ocr.backend: tesseract`; системный исполняемый файл Tesseract и языковой пакет должны быть установлены отдельно.
 
 ## Запуск
+
+Запускайте из графической сессии Raspberry Pi OS:
 
 ```bash
 cd ~/RPI-Plate-Recognition
@@ -171,56 +209,55 @@ cd barrier
 python -m src.main
 ```
 
-Запускайте команду из графической сессии Raspberry Pi OS Desktop. При включённом GUI должны быть доступны `DISPLAY` или `WAYLAND_DISPLAY`.
+При `display.enabled: true` требуются GUI-сборка OpenCV и переменная окружения `DISPLAY` или `WAYLAND_DISPLAY`. Нажмите **Q** в окне видео для завершения.
 
-Перед запуском проверьте наличие двух ONNX-файлов и whitelist:
+Для работы приложения нужны оба runtime ONNX-файла и whitelist:
 
 ```bash
-ls -lh models/*.onnx
+cd barrier
+ls -lh models/license-plate-finetune-v1n.onnx models/yolov8n.onnx
 cat config/allowed_plates.txt
 ```
 
-## Проверка и диагностика
+## Тесты и диагностика
+
+Тесты основного runtime:
+
+```bash
+cd barrier
+python -m pip install pytest
+pytest -v
+```
+
+Текущие unit-тесты проверяют whitelist, последовательные подтверждения, сброс подтверждений и нормализацию строки. Они не проверяют камеру, PWM, физическое движение сервопривода, GUI или точность ONNX-моделей на реальном потоке.
+
+Логи записываются в консоль и `barrier/data/logs/barrier.log` (до 2 MB на файл, 3 резервные копии). Время детекции двух YOLO-моделей логируется совместно; время OCR — отдельно.
+
+Проверка окружения:
 
 ```bash
 python - <<'PY'
 import cv2, onnxruntime, pytesseract
 print("OpenCV:", cv2.__version__)
-print("OpenCV GUI:", [x.strip() for x in cv2.getBuildInformation().splitlines() if x.strip().startswith("GUI:")])
+print("GUI:", [x.strip() for x in cv2.getBuildInformation().splitlines()
+               if x.strip().startswith("GUI:")])
 print("ONNX Runtime:", onnxruntime.__version__)
 print("Tesseract:", pytesseract.get_tesseract_version())
 PY
 ```
 
-Если GUI не открывается, проверьте, что установлена именно `opencv-python`, а не headless-сборка. Если OCR не работает, проверьте `tesseract --version` и наличие языка `eng`. Если модель не найдена, сверьте путь в YAML и имя файла.
+Если используется FastPlateOCR, дополнительно проверьте, что установлен пакет версии 0.3.x и доступна загрузка модели. Для PWM проверьте реальное соответствие chip/channel и GPIO13 на самом Raspberry Pi.
 
-## Структура runtime
+## Windows-подпроект
 
-```text
-barrier/
-├── config/
-│   ├── settings.yaml
-│   └── allowed_plates.txt
-├── models/
-│   ├── yolov8n.onnx
-│   └── license-plate-finetune-v1n.onnx
-├── src/
-│   ├── main.py
-│   ├── camera.py
-│   ├── detector.py
-│   ├── ocr.py
-│   ├── access_control.py
-│   ├── barrier.py
-│   └── logger.py
-└── data/
-    └── logs/
-```
+Каталог `barrier/windows/` содержит отдельную offline-утилиту оценки детектора и Tesseract OCR по размеченному датасету. Она не управляет камерой, GPIO или сервоприводом и не является Windows-портом runtime. Подробная инструкция: [barrier/windows/README.md](barrier/windows/README.md).
 
-## Безопасность и ограничения
+## Ограничения и безопасность
 
-1. Не открывайте шлагбаум только по наличию рамки: требуется распознанная строка и совпадение с whitelist.
-2. Проверьте false positives и OCR-ошибки на реальных кадрах, включая ночь, блики, дождь и разные углы.
-3. Настройте подтверждения и cooldown под условия эксплуатации; слишком малое число подтверждений снижает устойчивость к ошибочным распознаваниям.
-4. Предусмотрите ручное аварийное управление и безопасное поведение при потере питания/связи.
-5. Не используйте SG-90 для реальной тяжёлой стрелы шлагбаума.
-6. ONNX-инференс выполняется на CPU; реальная задержка зависит от версии ОС, модели, разрешения и охлаждения Raspberry Pi. Измерьте её на устройстве.
+- OCR и детекция могут ошибаться из-за освещения, бликов, загрязнения, угла обзора и качества изображения. Проверяйте точность на собственном датасете.
+- FastPlateOCR global-модель не гарантирует точность на конкретных российских номерах; оцените её на размеченных кадрах до использования.
+- `required_confirmations: 1` означает, что одного распознавания достаточно. Для более строгого режима увеличьте значение и проверьте задержку.
+- Cooldown ограничивает повторные разрешения, но не заменяет датчики безопасности.
+- Удержание открытого положения при наличии транспортного средства основано на детекторе транспорта, а не на датчике физического положения/проезда.
+- Предусмотрите независимое ручное аварийное управление и безопасное поведение при отказе питания/связи.
+- Не используйте SG-90 для тяжёлой стрелы. Реальный шлагбаум требует промышленного привода, концевых датчиков и защиты от защемления.
