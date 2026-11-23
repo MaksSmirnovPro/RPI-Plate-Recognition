@@ -8,7 +8,7 @@
 
 - **YOLOv8n COCO** — обнаруживает транспортные средства (car, motorcycle, bus, truck); зелёная рамка.
 - **YOLO11n License Plate** — обнаруживает область номерного знака; синяя рамка.
-- **Tesseract OCR** — распознаёт символы только внутри crop номерного знака.
+- **FastPlateOCR / Tesseract** — распознаёт символы только внутри crop номерного знака (выбор backend задаётся в конфигурации).
 - **AccessControl** — нормализует строку и выполняет проверку по `barrier/config/allowed_plates.txt`.
 
 В экспериментальной ветке по умолчанию используется `fast-plate-ocr` (компактная нейросеть через ONNX Runtime) вместо Tesseract. Старый Tesseract backend сохранён как резервный вариант и выбирается через `ocr.backend: tesseract`.
