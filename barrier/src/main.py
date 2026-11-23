@@ -86,7 +86,7 @@ class LicensePlateSystem:
 
         self.barrier = Barrier(
             pwm_channel=barrier_cfg.get("pwm_channel", 1),
-            pwm_chip=barrier_cfg.get("pwm_chip", 2),
+            pwm_chip=barrier_cfg.get("pwm_chip", 0),
             frequency_hz=barrier_cfg.get("frequency_hz", 50),
             min_pulse_width_ms=barrier_cfg.get("min_pulse_width_ms", 1.0),
             max_pulse_width_ms=barrier_cfg.get("max_pulse_width_ms", 2.0),
