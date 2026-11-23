@@ -51,9 +51,23 @@ class LicensePlateSystem:
             model_path=str(model_path),
             input_size=detector_cfg.get("input_size", 640),
             confidence=detector_cfg.get("confidence", 0.45),
-            nms_threshold=detector_cfg.get(
-                "nms_threshold", 0.45
-            ),
+            nms_threshold=detector_cfg.get("nms_threshold", 0.45),
+        )
+
+        vehicle_model_path = PROJECT_DIR / detector_cfg.get(
+            "vehicle_model_path", "models/yolov8n.onnx"
+        )
+        if not vehicle_model_path.exists():
+            raise FileNotFoundError(
+                f"Vehicle detection model not found: {vehicle_model_path}. "
+                "Download yolov8n.onnx as described in README.md."
+            )
+        self.vehicle_detector = PlateDetector(
+            model_path=str(vehicle_model_path),
+            input_size=detector_cfg.get("vehicle_input_size", 640),
+            confidence=detector_cfg.get("vehicle_confidence", 0.35),
+            nms_threshold=detector_cfg.get("vehicle_nms_threshold", 0.45),
+            class_ids=(2, 3, 5, 7),
         )
 
         # OCR
@@ -98,6 +112,8 @@ class LicensePlateSystem:
             closed_angle=barrier_cfg.get("closed_angle", 180),
             opened_angle=barrier_cfg.get("opened_angle", 90),
             open_duration=barrier_cfg.get("open_duration", 10),
+            closed_pulse_width_ms=barrier_cfg.get("closed_pulse_width_ms"),
+            opened_pulse_width_ms=barrier_cfg.get("opened_pulse_width_ms"),
         )
 
         # Processing
@@ -115,6 +131,10 @@ class LicensePlateSystem:
         self.latest_frame = None
         self.result_frame = None
         self.result_until = 0.0
+        self.latest_vehicle_detections = []
+        self.latest_plate_detections = []
+        self.recognized_text = ""
+        self.recognized_until = 0.0
 
         self.stop_event = threading.Event()
         self.worker = None
@@ -152,8 +172,12 @@ class LicensePlateSystem:
                 continue
 
             try:
-                # YOLO detection
+                # Both detectors run in the worker; GUI keeps rendering camera frames.
+                vehicle_detections = self.vehicle_detector.detect(frame)
                 detections = self.detector.detect(frame)
+                with self.frame_lock:
+                    self.latest_vehicle_detections = vehicle_detections
+                    self.latest_plate_detections = detections
 
                 # Сортируем по confidence
                 detections = sorted(
@@ -164,7 +188,7 @@ class LicensePlateSystem:
 
                 # Наличие обнаруженной номерной рамки.
                 # Пока рамка видна, продлеваем открытое состояние.
-                vehicle_present = len(detections) > 0
+                vehicle_present = len(vehicle_detections) > 0
 
                 self.barrier.update(
                     vehicle_present=vehicle_present
@@ -231,11 +255,8 @@ class LicensePlateSystem:
                     )
 
                     with self.frame_lock:
-                        self.result_frame = display_frame
-                        self.result_until = (
-                            time.monotonic()
-                            + self.result_display_seconds
-                        )
+                        self.recognized_text = plate
+                        self.recognized_until = time.monotonic() + self.result_display_seconds
 
                     # Проверка доступа
                     if self.access.confirm_plate(plate):
@@ -330,18 +351,26 @@ class LicensePlateSystem:
 
                 with self.frame_lock:
                     self.latest_frame = frame.copy()
-
-                    if self.display_enabled:
-                        if (
-                            self.result_frame is not None
-                            and time.monotonic() < self.result_until
-                        ):
-                            display_frame = self.result_frame.copy()
-                        else:
-                            self.result_frame = None
-                            display_frame = frame.copy()
+                    vehicle_boxes = list(self.latest_vehicle_detections)
+                    plate_boxes = list(self.latest_plate_detections)
+                    recognized_text = self.recognized_text if time.monotonic() < self.recognized_until else ""
 
                 if self.display_enabled:
+                    display_frame = frame.copy()
+                    height, width = display_frame.shape[:2]
+                    for x1, y1, x2, y2, score in vehicle_boxes:
+                        x1, y1, x2, y2 = map(int, (x1, y1, x2, y2))
+                        cv2.rectangle(display_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                        cv2.putText(display_frame, f"Vehicle {score:.2f}", (x1, max(20, y1 - 8)),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2, cv2.LINE_AA)
+                    for x1, y1, x2, y2, score in plate_boxes:
+                        x1, y1, x2, y2 = map(int, (x1, y1, x2, y2))
+                        cv2.rectangle(display_frame, (x1, y1), (x2, y2), (255, 120, 0), 2)
+                        cv2.putText(display_frame, f"Plate {score:.2f}", (x1, min(height - 5, y2 + 18)),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 120, 0), 2, cv2.LINE_AA)
+                    if recognized_text:
+                        cv2.putText(display_frame, recognized_text, (12, 28),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2, cv2.LINE_AA)
                     cv2.imshow(window_name, display_frame)
                     key = cv2.waitKey(1) & 0xFF
 
