@@ -1,4 +1,5 @@
 
+import os
 import threading
 import time
 from pathlib import Path
@@ -24,9 +25,9 @@ class LicensePlateSystem:
         self.logger = setup_logger()
         self.config = self.load_config()
 
-        # Display is optional: keep False when using opencv-python-headless.
+        # GUI display is enabled by default; use opencv-python (not headless).
         display_cfg = self.config.get("display", {})
-        self.display_enabled = bool(display_cfg.get("enabled", False))
+        self.display_enabled = bool(display_cfg.get("enabled", True))
 
         # Camera
         camera_cfg = self.config["camera"]
@@ -278,7 +279,33 @@ class LicensePlateSystem:
             "Starting license plate recognition system"
         )
 
+        window_name = "License Plate Recognition"
+        window_created = False
+
         try:
+            if self.display_enabled:
+                build_info = cv2.getBuildInformation()
+                gui_line = next(
+                    (line.strip() for line in build_info.splitlines()
+                     if line.strip().startswith("GUI:")),
+                    "GUI: unknown",
+                )
+                if "NONE" in gui_line.upper():
+                    raise RuntimeError(
+                        "OpenCV was installed without GUI support. "
+                        "Install opencv-python and remove opencv-python-headless."
+                    )
+                if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+                    raise RuntimeError(
+                        "No desktop display session detected (DISPLAY/WAYLAND_DISPLAY is unset). "
+                        "Run the application from the Raspberry Pi OS desktop session."
+                    )
+                cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+                window_created = True
+                self.logger.info("Video window created. Press Q to exit.")
+            else:
+                self.logger.info("Video display disabled by configuration.")
+
             self.camera.start()
 
             self.barrier.close()
@@ -290,21 +317,6 @@ class LicensePlateSystem:
             )
 
             self.worker.start()
-
-            window_name = "License Plate Recognition"
-
-            if self.display_enabled:
-                cv2.namedWindow(
-                    window_name,
-                    cv2.WINDOW_NORMAL,
-                )
-                self.logger.info(
-                    "Video window started. Press Q to exit."
-                )
-            else:
-                self.logger.info(
-                    "Display disabled; running in headless mode. Press Ctrl+C to exit."
-                )
 
             while not self.stop_event.is_set():
 
@@ -353,7 +365,7 @@ class LicensePlateSystem:
             if self.worker is not None:
                 self.worker.join(timeout=5.0)
 
-            if self.display_enabled:
+            if window_created:
                 try:
                     cv2.destroyAllWindows()
                 except cv2.error:
