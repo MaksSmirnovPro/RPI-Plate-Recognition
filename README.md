@@ -26,7 +26,8 @@ sudo apt install -y \
   python3-picamera2 python3-libcamera \
   python3-gpiozero python3-lgpio \
   tesseract-ocr tesseract-ocr-eng \
-  libcamera-dev
+  libcamera-dev \
+  libgtk-3-0 libgl1 libglib2.0-0
 ```
 
 Если для используемого языка/региона номеров нужен другой набор символов Tesseract, установите соответствующий пакет `tesseract-ocr-<код-языка>`. Для большинства номерных знаков начните с `eng`.
@@ -44,6 +45,8 @@ cd ~/barrier
 python3 -m venv --system-site-packages .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
+# Remove a previously installed headless build to avoid cv2 package conflicts
+python -m pip uninstall -y opencv-python-headless opencv-python
 pip install -r requirements.txt
 ```
 
@@ -52,12 +55,12 @@ pip install -r requirements.txt
 Полный список находится в `requirements.txt`:
 
 - `numpy` — массивы и обработка кадров.
-- `opencv-python-headless` — подготовка изображения и обработка рамок без GUI.
+- `opencv-python` — обработка изображений и GUI-окно предпросмотра камеры (HighGUI). Не устанавливайте одновременно `opencv-python-headless`.
 - `onnxruntime` — запуск ONNX-модели на CPU ARM64.
 - `pytesseract` — Python-обёртка для системного Tesseract OCR.
 - `rpi-hardware-pwm` — управление RP1 аппаратным PWM сервопривода.
 
-`picamera2` и `libcamera` устанавливаются системными пакетами APT. `rpi-hardware-pwm` устанавливается в виртуальное окружение через `requirements.txt`.
+`picamera2` и `libcamera` устанавливаются системными пакетами APT. `opencv-python` (GUI-сборка) и `rpi-hardware-pwm` устанавливаются в виртуальное окружение через `requirements.txt`. Запускайте приложение из графической сессии Raspberry Pi OS Desktop, чтобы были доступны `DISPLAY` или `WAYLAND_DISPLAY`.
 
 ### Модель YOLO (готовые веса, без обучения)
 
@@ -298,6 +301,8 @@ source .venv/bin/activate
 
 # 3. Установить Python-зависимости
 pip install --upgrade pip
+# Удалить headless/старую сборку OpenCV, если она установлена
+python -m pip uninstall -y opencv-python-headless opencv-python
 pip install -r requirements.txt
 
 # 4. Скачать модель YOLO (если не скачана)
