@@ -11,7 +11,7 @@
 - **Tesseract OCR** — распознаёт символы только внутри crop номерного знака.
 - **AccessControl** — нормализует строку и выполняет проверку по `barrier/config/allowed_plates.txt`.
 
-Для ускорения live OCR используется один подготовленный crop и максимум два запуска Tesseract (PSM 7 и 8). Старый перебор 8 вариантов предобработки × 4 PSM (до 32 запусков на один номер) оставлен вне основного runtime-пути и не используется методом `recognize()`.
+В экспериментальной ветке по умолчанию используется `fast-plate-ocr` (компактная нейросеть через ONNX Runtime) вместо Tesseract. Старый Tesseract backend сохранён как резервный вариант и выбирается через `ocr.backend: tesseract`.
 
 ## Аппаратная часть
 
@@ -71,7 +71,7 @@ python -m pip install -r requirements.txt
 | `numpy` | массивы и обработка кадров |
 | `opencv-python` | компьютерное зрение и GUI |
 | `onnxruntime` | инференс обеих YOLO ONNX-моделей на CPU |
-| `pytesseract` | вызов установленного Tesseract |
+| `pytesseract` | резервный OCR backend Tesseract |\n| `fast-plate-ocr[onnx]` | нейросетевой OCR номерного знака через ONNX Runtime |
 | `PyYAML` | чтение настроек |
 | `huggingface_hub` | загрузка готовых весов |
 | `rpi-hardware-pwm` | аппаратный PWM для сервопривода |
@@ -144,10 +144,10 @@ PY
 - `detector.model_path` — модель номерных знаков.
 - `detector.vehicle_model_path` — COCO модель транспорта.
 - `detector.*_confidence` — пороги детекции.
-- `ocr.language` — язык Tesseract (по умолчанию `eng`).
+- `ocr.backend` — `fast_plate_ocr` или `tesseract`.\n- `ocr.model_name` — имя модели FastPlateOCR; по умолчанию `cct-xs-v2-global-model`.\n- `ocr.device` — `cpu` для Raspberry Pi.\n- `ocr.language` — язык Tesseract, если выбран резервный backend.
 - `access.allowed_plates_file` — локальный whitelist.
 - `access.required_confirmations` — количество последовательных подтверждений.
-- `processing.interval_seconds` — пауза между циклами фоновой обработки.
+- `processing.interval_seconds` — пауза между циклами фоновой обработки (в этой экспериментальной ветке 0.5 секунды).
 - `display.enabled` — GUI preview.
 - `barrier.pwm_chip` / `pwm_channel` — PWM controller и канал.
 - `closed_pulse_width_ms` / `opened_pulse_width_ms` — индивидуальная калибровка положений сервопривода.
