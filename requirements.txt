@@ -8,3 +8,4 @@ pytesseract>=0.3.10,<0.4
 PyYAML>=6.0,<7
 huggingface_hub>=0.23,<2
 rpi-hardware-pwm>=0.2.2,<0.3
+fast-plate-ocr[onnx]>=0.1,<1
