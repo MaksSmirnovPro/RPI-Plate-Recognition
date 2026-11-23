@@ -27,5 +27,9 @@ barrier:
   opened_angle: 90
   open_duration: 7
 
+display:
+  # false works with opencv-python-headless; set true only with GUI-enabled OpenCV
+  enabled: false
+
 processing:
   interval_seconds: 2
