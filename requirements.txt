@@ -6,7 +6,5 @@ onnxruntime>=1.17,<2
 pytesseract>=0.3.10,<0.4
 PyYAML>=6.0,<7
 huggingface_hub>=0.23,<2  # загрузка готовых весов из Hugging Face
-libcap-dev
 picamera2
-python3-opencv
 rpi-hardware-pwm>=0.2.2,<0.3
